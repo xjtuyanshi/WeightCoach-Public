@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.lukegogogo.weightcoach.bridge</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>__APP_DIR__/server.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>WEIGHTCOACH_TAILSCALE_LOGIN</key>
+        <string>__TAILSCALE_LOGIN__</string>
+        <key>WEIGHTCOACH_CODEX_PATH</key>
+        <string>/Applications/ChatGPT.app/Contents/Resources/codex</string>
+        <key>WEIGHTCOACH_CODEX_MODEL</key>
+        <string>gpt-5.6-terra</string>
+        <key>WEIGHTCOACH_CODEX_TIMEOUT</key>
+        <string>90</string>
+        <key>WEIGHTCOACH_BRIDGE_PORT</key>
+        <string>8765</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>__APP_DIR__</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/bridge.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/bridge-error.log</string>
+</dict>
+</plist>

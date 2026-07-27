@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "input_kind",
+    "items",
+    "warnings"
+  ],
+  "properties": {
+    "input_kind": {
+      "type": "string",
+      "enum": [
+        "food_photo",
+        "receipt_or_menu",
+        "non_food"
+      ]
+    },
+    "items": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "portion_description",
+          "estimated_calories",
+          "estimated_calories_min",
+          "estimated_calories_max",
+          "protein_g",
+          "carbs_g",
+          "fat_g",
+          "caffeine_mg",
+          "confidence",
+          "requires_confirmation",
+          "note"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "portion_description": {
+            "type": "string"
+          },
+          "estimated_calories": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5000
+          },
+          "estimated_calories_min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 5000
+          },
+          "estimated_calories_max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 5000
+          },
+          "protein_g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "carbs_g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "fat_g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "caffeine_mg": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 2000
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "requires_confirmation": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

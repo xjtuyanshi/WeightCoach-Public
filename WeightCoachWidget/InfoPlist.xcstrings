@@ -1,0 +1,13 @@
+{
+  "sourceLanguage" : "zh-Hans",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "WeightCoach" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "减重助手" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "減重助手" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

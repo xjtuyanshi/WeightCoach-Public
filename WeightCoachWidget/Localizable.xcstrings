@@ -1,0 +1,62 @@
+{
+  "sourceLanguage" : "zh-Hans",
+  "strings" : {
+    "widget.configuration.description" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "See today's remaining calories and intake progress." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查看今日还能吃多少千卡，以及当前摄入进度。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "查看今天還能吃多少大卡，以及目前的攝取進度。" } }
+      }
+    },
+    "widget.configuration.name" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Today's Calorie Budget" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "今日热量预算" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "今日熱量預算" } }
+      }
+    },
+    "widget.kcal" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "kcal" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "千卡" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "大卡" } }
+      }
+    },
+    "widget.openApp" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open WeightCoach" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开减重助手" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "開啟減重助手" } }
+      }
+    },
+    "widget.openToUpdate" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open WeightCoach to update today's data" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开减重助手更新今日数据" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "開啟減重助手以更新今日資料" } }
+      }
+    },
+    "widget.overBudget" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Over today" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "今日已超出" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "今日已超出" } }
+      }
+    },
+    "widget.remaining" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Calories left today" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "今日还能吃" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "今日還能吃" } }
+      }
+    },
+    "widget.updateToday" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Update today's data" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "更新今日数据" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "更新今日資料" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

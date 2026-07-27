@@ -1,0 +1,41 @@
+{
+  "sourceLanguage" : "zh-Hans",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "WeightCoach" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "减重助手" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "減重助手" } }
+      }
+    },
+    "NSCameraUsageDescription" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera access is used to photograph food for AI recognition and scan product barcodes." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "需要使用相机拍摄食物照片进行 AI 识别，以及扫描商品条形码。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "需要使用相機拍攝食物照片進行 AI 辨識，以及掃描商品條碼。" } }
+      }
+    },
+    "NSHealthShareUsageDescription" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Health data such as weight, body fat, height, and active energy is used to calculate daily energy expenditure and weight-loss progress." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "需要读取您的体重、体脂率、身高、活动能量等健康数据，用于计算每日热量消耗和减重进度。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "需要讀取您的體重、體脂率、身高、活動能量等健康資料，用於計算每日熱量消耗和減重進度。" } }
+      }
+    },
+    "NSHealthUpdateUsageDescription" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your logged weight, body fat, and dietary energy can be saved to Apple Health." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "需要将您记录的体重、体脂率和饮食摄入写入 Apple 健康。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "需要將您記錄的體重、體脂率和飲食攝取寫入 Apple 健康。" } }
+      }
+    },
+    "NSPhotoLibraryUsageDescription" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Photo Library access is used to select food photos for AI recognition." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "需要访问相册选择食物照片进行 AI 识别。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "需要存取相簿以選擇食物照片進行 AI 辨識。" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

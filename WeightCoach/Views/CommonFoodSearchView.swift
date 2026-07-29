@@ -75,6 +75,13 @@ struct CommonFoodSearchView: View {
         return selectedFood.nutrition(forGrams: grams)
     }
 
+    private var matchedStandardPortion: CommonFoodStandardPortion? {
+        guard let selectedFood, let grams else { return nil }
+        return selectedFood.standardPortions.first {
+            abs($0.grams - grams) < 0.01
+        }
+    }
+
     private var canSave: Bool {
         selectedFood != nil && calculatedNutrition?.energyKcal != nil
     }
@@ -129,8 +136,7 @@ struct CommonFoodSearchView: View {
                 if let demoFoodID,
                    let demoFood = CommonFoodCatalog.food(id: demoFoodID) {
                     query = demoFood.name
-                    selectedFood = demoFood
-                    gramsText = "150"
+                    selectFood(demoFood, focusesWeight: false)
                 } else {
                     Task { @MainActor in
                         await Task.yield()
@@ -236,20 +242,37 @@ struct CommonFoodSearchView: View {
         }
 
         Section("实际吃了多少") {
+            if !food.standardPortions.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("常用份量")
+                        .font(.subheadline.bold())
+                    HStack(spacing: 8) {
+                        ForEach(food.standardPortions) { portion in
+                            standardPortionButton(portion)
+                        }
+                    }
+                    Text("按去壳、去皮后的可食部分估算；大小不同，可以继续修改克重。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 2)
+            }
             HStack {
-                TextField("重量", text: $gramsText)
+                TextField("可食部分重量", text: $gramsText)
                     .keyboardType(.decimalPad)
                     .focused($gramsFocused)
                 Text(interfaceLocalized("common_food.unit.grams", locale: locale))
                     .foregroundStyle(.secondary)
             }
-            HStack(spacing: 8) {
-                ForEach([50, 100, 150, 200], id: \.self) { amount in
-                    Button("\(amount)g") {
-                        gramsText = String(amount)
+            if food.standardPortions.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach([50, 100, 150, 200], id: \.self) { amount in
+                        Button("\(amount)g") {
+                            gramsText = String(amount)
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
                 }
             }
             Picker("餐次", selection: $mealType) {
@@ -323,11 +346,10 @@ struct CommonFoodSearchView: View {
                     Button {
                         searchFocused = false
                         gramsFocused = false
-                        selectedFood = food
-                        Task { @MainActor in
-                            await Task.yield()
-                            gramsFocused = true
-                        }
+                        selectFood(
+                            food,
+                            focusesWeight: food.standardPortions.isEmpty
+                        )
                     } label: {
                         resultRow(food)
                     }
@@ -360,6 +382,14 @@ struct CommonFoodSearchView: View {
                 Text(food.localizedPreparation(locale: locale))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let portion = food.defaultStandardPortion {
+                    Label(
+                        portion.searchSummary(locale: locale),
+                        systemImage: "scalemass"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(Color.accentColor)
+                }
                 Text(per100GramEnergySummary(food.nutritionPer100Grams))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -443,8 +473,11 @@ struct CommonFoodSearchView: View {
                     .frame(maxWidth: .infinity)
             } else {
                 let kcal = calculatedNutrition?.energyKcal.map(Self.numberText) ?? "0"
+                let amount = matchedStandardPortion?
+                    .compactDescription(locale: locale)
+                    ?? "\(gramsText) \(interfaceLocalized("common_food.unit.grams", locale: locale))"
                 Text(
-                    "\(interfaceLocalized("记录", locale: locale)) \(gramsText) \(interfaceLocalized("common_food.unit.grams", locale: locale)) · \(interfaceCalorieText(kcal, locale: locale))"
+                    "\(interfaceLocalized("记录", locale: locale)) \(amount) · \(interfaceCalorieText(kcal, locale: locale))"
                 )
                     .font(.headline)
                     .frame(maxWidth: .infinity)
@@ -465,7 +498,9 @@ struct CommonFoodSearchView: View {
                 grams: grams,
                 mealType: mealType,
                 date: defaultDate,
-                locale: locale
+                locale: locale,
+                portionText: matchedStandardPortion?
+                    .savedDescription(locale: locale)
               ),
               !isSaving else {
             return
@@ -488,6 +523,47 @@ struct CommonFoodSearchView: View {
                 isSaving = false
             }
         }
+    }
+
+    private func selectFood(
+        _ food: CommonFoodReference,
+        focusesWeight: Bool
+    ) {
+        selectedFood = food
+        gramsText = Self.gramsText(
+            food.defaultStandardPortion?.grams ?? 100
+        )
+        guard focusesWeight else { return }
+        Task { @MainActor in
+            await Task.yield()
+            gramsFocused = true
+        }
+    }
+
+    private func standardPortionButton(
+        _ portion: CommonFoodStandardPortion
+    ) -> some View {
+        let isSelected = matchedStandardPortion?.id == portion.id
+        return Button {
+            gramsFocused = false
+            gramsText = Self.gramsText(portion.grams)
+        } label: {
+            VStack(spacing: 3) {
+                Text(portion.localizedLabel(locale: locale))
+                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Text(portion.approximateWeightDescription(locale: locale))
+                    .font(.caption2)
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity, minHeight: 48)
+        }
+        .buttonStyle(.bordered)
+        .tint(isSelected ? Color.accentColor : .secondary)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var manualFallbackTitle: String {
@@ -524,5 +600,12 @@ struct CommonFoodSearchView: View {
             return String(Int(number.rounded()))
         }
         return String(format: "%.1f", number)
+    }
+
+    private static func gramsText(_ value: Double) -> String {
+        if value.rounded() == value {
+            return String(Int(value))
+        }
+        return String(format: "%.1f", value)
     }
 }

@@ -1,5 +1,100 @@
 import Foundation
 
+/// USDA FoodData Central 提供的常见家用份量及其可食部分克重。
+///
+/// 这是展示层的静态参考，不改变目录仍以「每 100 克」保存和计算的事实；
+/// 品种、大小和品牌有差异，因此所有面向用户的文案都明确标注为约数。
+struct CommonFoodStandardPortion: Identifiable, Equatable, Sendable {
+    let id: String
+    let grams: Double
+    let simplifiedLabel: String
+    let traditionalLabel: String
+    let englishLabel: String
+    let isDefault: Bool
+
+    init(
+        id: String,
+        grams: Double,
+        simplifiedLabel: String,
+        traditionalLabel: String,
+        englishLabel: String,
+        isDefault: Bool = false
+    ) {
+        self.id = id
+        self.grams = grams
+        self.simplifiedLabel = simplifiedLabel
+        self.traditionalLabel = traditionalLabel
+        self.englishLabel = englishLabel
+        self.isDefault = isDefault
+    }
+
+    func localizedLabel(locale: Locale) -> String {
+        switch AppLanguage.system.resolvedLanguage(systemLocale: locale) {
+        case .english:
+            englishLabel
+        case .traditionalChinese:
+            traditionalLabel
+        case .simplifiedChinese, .system:
+            simplifiedLabel
+        }
+    }
+
+    func compactDescription(locale: Locale) -> String {
+        "\(localizedLabel(locale: locale)) · \(Self.amountText(grams))\(Self.gramUnit(locale: locale))"
+    }
+
+    func approximateWeightDescription(locale: Locale) -> String {
+        let amount = Self.amountText(grams)
+        switch AppLanguage.system.resolvedLanguage(systemLocale: locale) {
+        case .english:
+            return "about \(amount) g"
+        case .traditionalChinese:
+            return "約 \(amount) 公克"
+        case .simplifiedChinese, .system:
+            return "约 \(amount) 克"
+        }
+    }
+
+    func savedDescription(locale: Locale) -> String {
+        let label = localizedLabel(locale: locale)
+        let amount = Self.amountText(grams)
+        switch AppLanguage.system.resolvedLanguage(systemLocale: locale) {
+        case .english:
+            return "\(label) (about \(amount) g)"
+        case .traditionalChinese:
+            return "\(label)（約 \(amount) 公克）"
+        case .simplifiedChinese, .system:
+            return "\(label)（约 \(amount) 克）"
+        }
+    }
+
+    func searchSummary(locale: Locale) -> String {
+        let label = localizedLabel(locale: locale)
+        let amount = Self.amountText(grams)
+        switch AppLanguage.system.resolvedLanguage(systemLocale: locale) {
+        case .english:
+            return "\(label) is about \(amount) g edible weight"
+        case .traditionalChinese:
+            return "\(label)約 \(amount) 公克可食部分"
+        case .simplifiedChinese, .system:
+            return "\(label)约 \(amount) 克可食部分"
+        }
+    }
+
+    private static func gramUnit(locale: Locale) -> String {
+        AppLanguage.system.resolvedLanguage(systemLocale: locale) == .english
+            ? "g"
+            : interfaceLocalized("common_food.unit.grams", locale: locale)
+    }
+
+    private static func amountText(_ amount: Double) -> String {
+        if amount.rounded() == amount {
+            return String(Int(amount))
+        }
+        return String(format: "%.1f", amount)
+    }
+}
+
 /// 内置的常见食物参考值。每项都明确烹调状态，避免把生重、熟重或额外用油混为一谈。
 struct CommonFoodReference: Identifiable, Equatable, Sendable {
     let id: String
@@ -8,6 +103,25 @@ struct CommonFoodReference: Identifiable, Equatable, Sendable {
     let preparation: String
     let nutritionPer100Grams: NutritionValues
     let fdcID: Int?
+    let standardPortions: [CommonFoodStandardPortion]
+
+    init(
+        id: String,
+        name: String,
+        aliases: [String],
+        preparation: String,
+        nutritionPer100Grams: NutritionValues,
+        fdcID: Int?,
+        standardPortions: [CommonFoodStandardPortion] = []
+    ) {
+        self.id = id
+        self.name = name
+        self.aliases = aliases
+        self.preparation = preparation
+        self.nutritionPer100Grams = nutritionPer100Grams
+        self.fdcID = fdcID
+        self.standardPortions = standardPortions
+    }
 
     /// The stored values remain Simplified Chinese so existing records and
     /// search aliases stay backward-compatible. UI and newly-created drafts
@@ -44,6 +158,10 @@ struct CommonFoodReference: Identifiable, Equatable, Sendable {
         return "USDA FoodData Central · SR Legacy 2018 参考值"
     }
 
+    var defaultStandardPortion: CommonFoodStandardPortion? {
+        standardPortions.first(where: \.isDefault) ?? standardPortions.first
+    }
+
     func nutrition(forGrams grams: Double) -> NutritionValues? {
         guard grams.isFinite, grams > 0, grams <= 10_000 else { return nil }
         return NutritionEngine.calculate(
@@ -56,7 +174,8 @@ struct CommonFoodReference: Identifiable, Equatable, Sendable {
         grams: Double,
         mealType: MealType,
         date: Date,
-        locale: Locale = Locale(identifier: "zh-Hans")
+        locale: Locale = Locale(identifier: "zh-Hans"),
+        portionText: String? = nil
     ) -> FoodEntryDraft? {
         guard let nutrition = nutrition(forGrams: grams),
               let calories = nutrition.energyKcal?.doubleValue else {
@@ -69,7 +188,8 @@ struct CommonFoodReference: Identifiable, Equatable, Sendable {
             protein: nutrition.proteinG?.doubleValue,
             carbs: nutrition.carbohydratesG?.doubleValue,
             fat: nutrition.fatG?.doubleValue,
-            portionText: "\(Self.amountText(grams)) \(Self.localizedGramUnit(locale: locale))",
+            portionText: portionText
+                ?? "\(Self.amountText(grams)) \(Self.localizedGramUnit(locale: locale))",
             mealType: mealType,
             source: .referenceCatalog,
             date: date,
@@ -193,7 +313,31 @@ enum CommonFoodCatalog {
                 carbohydratesG: 1.12,
                 fatG: 10.6
             ),
-            fdcID: 173424
+            fdcID: 173424,
+            standardPortions: [
+                CommonFoodStandardPortion(
+                    id: "half-large-egg",
+                    grams: 25,
+                    simplifiedLabel: "大号 ½ 个",
+                    traditionalLabel: "大號 ½ 個",
+                    englishLabel: "½ large egg"
+                ),
+                CommonFoodStandardPortion(
+                    id: "one-large-egg",
+                    grams: 50,
+                    simplifiedLabel: "大号 1 个",
+                    traditionalLabel: "大號 1 個",
+                    englishLabel: "1 large egg",
+                    isDefault: true
+                ),
+                CommonFoodStandardPortion(
+                    id: "two-large-eggs",
+                    grams: 100,
+                    simplifiedLabel: "大号 2 个",
+                    traditionalLabel: "大號 2 個",
+                    englishLabel: "2 large eggs"
+                ),
+            ]
         ),
         CommonFoodReference(
             id: "spinach-raw",
@@ -221,7 +365,31 @@ enum CommonFoodCatalog {
                 fatG: 0.33,
                 fiberG: 2.6
             ),
-            fdcID: 173944
+            fdcID: 173944,
+            standardPortions: [
+                CommonFoodStandardPortion(
+                    id: "small-banana",
+                    grams: 101,
+                    simplifiedLabel: "小根 1 根",
+                    traditionalLabel: "小根 1 根",
+                    englishLabel: "1 small banana"
+                ),
+                CommonFoodStandardPortion(
+                    id: "medium-banana",
+                    grams: 118,
+                    simplifiedLabel: "中等 1 根",
+                    traditionalLabel: "中等 1 根",
+                    englishLabel: "1 medium banana",
+                    isDefault: true
+                ),
+                CommonFoodStandardPortion(
+                    id: "large-banana",
+                    grams: 136,
+                    simplifiedLabel: "大根 1 根",
+                    traditionalLabel: "大根 1 根",
+                    englishLabel: "1 large banana"
+                ),
+            ]
         ),
         CommonFoodReference(
             id: "avocado-raw",
@@ -249,7 +417,31 @@ enum CommonFoodCatalog {
                 fatG: 0.17,
                 fiberG: 2.4
             ),
-            fdcID: 171688
+            fdcID: 171688,
+            standardPortions: [
+                CommonFoodStandardPortion(
+                    id: "small-apple",
+                    grams: 149,
+                    simplifiedLabel: "小号 1 个",
+                    traditionalLabel: "小號 1 個",
+                    englishLabel: "1 small apple"
+                ),
+                CommonFoodStandardPortion(
+                    id: "medium-apple",
+                    grams: 182,
+                    simplifiedLabel: "中等 1 个",
+                    traditionalLabel: "中等 1 個",
+                    englishLabel: "1 medium apple",
+                    isDefault: true
+                ),
+                CommonFoodStandardPortion(
+                    id: "large-apple",
+                    grams: 223,
+                    simplifiedLabel: "大号 1 个",
+                    traditionalLabel: "大號 1 個",
+                    englishLabel: "1 large apple"
+                ),
+            ]
         ),
         CommonFoodReference(
             id: "carrot-raw",
@@ -263,7 +455,31 @@ enum CommonFoodCatalog {
                 fatG: 0.24,
                 fiberG: 2.8
             ),
-            fdcID: 170393
+            fdcID: 170393,
+            standardPortions: [
+                CommonFoodStandardPortion(
+                    id: "small-carrot",
+                    grams: 50,
+                    simplifiedLabel: "小根 1 根",
+                    traditionalLabel: "小根 1 根",
+                    englishLabel: "1 small carrot"
+                ),
+                CommonFoodStandardPortion(
+                    id: "medium-carrot",
+                    grams: 61,
+                    simplifiedLabel: "中等 1 根",
+                    traditionalLabel: "中等 1 根",
+                    englishLabel: "1 medium carrot",
+                    isDefault: true
+                ),
+                CommonFoodStandardPortion(
+                    id: "large-carrot",
+                    grams: 72,
+                    simplifiedLabel: "大根 1 根",
+                    traditionalLabel: "大根 1 根",
+                    englishLabel: "1 large carrot"
+                ),
+            ]
         ),
         CommonFoodReference(
             id: "tofu-firm",
@@ -296,6 +512,22 @@ enum CommonFoodCatalog {
 
     static func food(id: String) -> CommonFoodReference? {
         foods.first { $0.id == id }
+    }
+
+    /// 旧记录只保存了本地化后的名称；切换 App 语言后仍尽量恢复同一个参考库身份，
+    /// 让「常吃」不会因为简繁英显示名不同而拆成三组。
+    static func referenceID(forStoredName storedName: String) -> String? {
+        let locales = [
+            Locale(identifier: "zh-Hans"),
+            Locale(identifier: "zh-Hant-TW"),
+            Locale(identifier: "en-US"),
+        ]
+        return foods.first { food in
+            locales.contains { locale in
+                food.localizedDisplayName(locale: locale) == storedName
+                    || food.localizedName(locale: locale) == storedName
+            }
+        }?.id
     }
 
     static func search(_ query: String) -> [CommonFoodReference] {

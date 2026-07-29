@@ -103,6 +103,10 @@ struct DashboardView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
+                    if DemoMode.demoRepeatFoodsEnabled {
+                        quickLoggingSections
+                    }
+
                     if let macroTargets {
                         MacroSummaryView(
                             metrics: nutritionMetrics,
@@ -131,10 +135,8 @@ struct DashboardView: View {
 
                     weeklyTrendCard
 
-                    quickAddButtons
-
-                    if !recentFoods.isEmpty {
-                        recentFoodsSection
+                    if !DemoMode.demoRepeatFoodsEnabled {
+                        quickLoggingSections
                     }
 
                     goalCard
@@ -179,7 +181,7 @@ struct DashboardView: View {
             .sheet(isPresented: $showCommonFoodSearch) {
                 CommonFoodSearchView(
                     defaultDate: .now,
-                    demoFoodID: DemoMode.demoCommonFoodEnabled ? "broccoli-raw" : nil,
+                    demoFoodID: DemoMode.demoCommonFoodEnabled ? "egg-hard-boiled" : nil,
                     demoQuery: DemoMode.demoFoodAutocompleteEnabled ? "西" : nil
                 )
             }
@@ -220,6 +222,14 @@ struct DashboardView: View {
             quickButton("自行填写", icon: "magnifyingglass") {
                 showCommonFoodSearch = true
             }
+        }
+    }
+
+    @ViewBuilder
+    private var quickLoggingSections: some View {
+        quickAddButtons
+        if !repeatFoodCards.isEmpty {
+            repeatFoodSuggestionsSection
         }
     }
 
@@ -329,22 +339,39 @@ struct DashboardView: View {
         }
     }
 
-    private var recentFoods: [FoodEntry] {
-        var seen = Set<String>()
-        var result: [FoodEntry] = []
-        for food in allFoods {
-            let key = repeatKey(for: food)
-            guard seen.insert(key).inserted else { continue }
-            result.append(food)
-            if result.count == 5 { break }
-        }
-        return result
+    private struct RepeatFoodCard: Identifiable {
+        let food: FoodEntry
+        let suggestion: FoodRepeatSuggestion
+
+        var id: String { suggestion.key }
     }
 
-    private var recentFoodsSection: some View {
+    private var repeatFoodCards: [RepeatFoodCard] {
+        let snapshots = allFoods.enumerated().map { index, food in
+            FoodRepeatSuggestionSnapshot(
+                sourceIndex: index,
+                key: repeatKey(for: food),
+                date: food.date
+            )
+        }
+        let suggestions = FoodRepeatSuggestionEngine.makeSuggestions(
+            snapshots: snapshots
+        )
+        return suggestions.all.compactMap { suggestion in
+            guard allFoods.indices.contains(suggestion.sourceIndex) else {
+                return nil
+            }
+            return RepeatFoodCard(
+                food: allFoods[suggestion.sourceIndex],
+                suggestion: suggestion
+            )
+        }
+    }
+
+    private var repeatFoodSuggestionsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("最近吃过 · 点一下直接记", systemImage: "clock.arrow.circlepath")
+                Label("常吃与最近 · 点一下直接记", systemImage: "clock.arrow.circlepath")
                     .font(.subheadline.bold())
                 Spacer()
                 Text("按上次份量")
@@ -354,44 +381,93 @@ struct DashboardView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(recentFoods) { food in
-                        let key = repeatKey(for: food)
-                        Button {
-                            repeatFood(food)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack {
-                                    Image(systemName: "plus.circle.fill")
-                                    Spacer()
-                                    if repeatingFoodKey == key {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                    }
-                                }
-                                Text(food.name)
-                                    .font(.subheadline.bold())
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-                                Text(food.portionText ?? interfaceLocalized("按上次记录", locale: locale))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                Text(interfaceCalorieText(food.calories.kcalText, locale: locale))
-                                    .font(.caption.bold())
-                                    .foregroundStyle(Color.accentColor)
-                            }
-                            .frame(width: 144, alignment: .leading)
-                            .padding(12)
-                            .background(Color(.secondarySystemGroupedBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(repeatingFoodKey != nil || isUndoingRepeat)
-                        .accessibilityLabel(repeatFoodAccessibilityLabel(food))
+                    ForEach(repeatFoodCards.indices, id: \.self) { index in
+                        repeatFoodButton(repeatFoodCards[index])
                     }
                 }
             }
         }
+    }
+
+    private func repeatFoodButton(_ card: RepeatFoodCard) -> some View {
+        let food = card.food
+        let key = repeatKey(for: food)
+        return Button {
+            repeatFood(food)
+        } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Label(
+                        card.suggestion.isFrequent
+                            ? interfaceLocalized("常吃", locale: locale)
+                            : interfaceLocalized("最近", locale: locale),
+                        systemImage: card.suggestion.isFrequent
+                            ? "star.fill"
+                            : "clock"
+                    )
+                    .font(.caption2.bold())
+                    .foregroundStyle(
+                        card.suggestion.isFrequent
+                            ? Color.accentColor
+                            : Color.secondary
+                    )
+                    Spacer()
+                    if repeatingFoodKey == key {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+                Text(food.name)
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(
+                    food.portionText
+                        ?? interfaceLocalized("按上次记录", locale: locale)
+                )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(
+                    interfaceCalorieText(
+                        food.calories.kcalText,
+                        locale: locale
+                    )
+                )
+                    .font(.caption.bold())
+                    .foregroundStyle(Color.accentColor)
+                if card.suggestion.isFrequent {
+                    Text(
+                        repeatFrequencyText(
+                            dayCount: card.suggestion.distinctDayCount
+                        )
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                }
+            }
+            .frame(width: 150, alignment: .topLeading)
+            .frame(minHeight: 105, alignment: .topLeading)
+            .padding(12)
+            .background(
+                card.suggestion.isFrequent
+                    ? Color.accentColor.opacity(0.08)
+                    : Color(.secondarySystemGroupedBackground)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .disabled(repeatingFoodKey != nil || isUndoingRepeat)
+        .accessibilityLabel(
+            repeatFoodAccessibilityLabel(
+                food,
+                suggestion: card.suggestion
+            )
+        )
     }
 
     private func repeatToast(_ message: String) -> some View {
@@ -481,13 +557,16 @@ struct DashboardView: View {
     }
 
     private func repeatKey(for food: FoodEntry) -> String {
-        if let productID = food.foodProductID {
-            return "product:\(productID.uuidString)"
-        }
-        let normalizedName = food.name
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        return "name:\(normalizedName)"
+        FoodRepeatIdentity.key(
+            productID: food.foodProductID,
+            barcode: food.barcode,
+            // 一键再记会把来源改成 quickRepeat；身份不能依赖 source，
+            // 否则同一条参考库食物会被拆成「reference」和「name」两组。
+            referenceCatalogID: CommonFoodCatalog.referenceID(
+                forStoredName: food.name
+            ),
+            name: food.name
+        )
     }
 
     private func quickButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
@@ -599,15 +678,34 @@ struct DashboardView: View {
         }
     }
 
-    private func repeatFoodAccessibilityLabel(_ food: FoodEntry) -> String {
+    private func repeatFoodAccessibilityLabel(
+        _ food: FoodEntry,
+        suggestion: FoodRepeatSuggestion
+    ) -> String {
         let calories = interfaceCalorieText(food.calories.kcalText, locale: locale)
+        let portion = food.portionText
+            ?? interfaceLocalized("按上次记录", locale: locale)
+        let status = suggestion.isFrequent
+            ? "\(interfaceLocalized("常吃", locale: locale))，\(repeatFrequencyText(dayCount: suggestion.distinctDayCount))"
+            : interfaceLocalized("最近", locale: locale)
         switch AppLanguage.system.resolvedLanguage(systemLocale: locale) {
         case .english:
-            return "Log \(food.name) again, \(calories)"
+            return "\(status). Log \(food.name) again, \(portion), \(calories)"
         case .traditionalChinese:
-            return "再次記錄\(food.name)，\(calories)"
+            return "\(status)。再次記錄\(food.name)，\(portion)，\(calories)"
         case .simplifiedChinese, .system:
-            return "再次记录\(food.name)，\(calories)"
+            return "\(status)。再次记录\(food.name)，\(portion)，\(calories)"
+        }
+    }
+
+    private func repeatFrequencyText(dayCount: Int) -> String {
+        switch AppLanguage.system.resolvedLanguage(systemLocale: locale) {
+        case .english:
+            return "\(dayCount) days in the last 30"
+        case .traditionalChinese:
+            return "近 30 天吃過 \(dayCount) 天"
+        case .simplifiedChinese, .system:
+            return "近 30 天吃过 \(dayCount) 天"
         }
     }
 

@@ -47,6 +47,10 @@ xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoReceipt
 xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoNutritionLabel
 # 自动打开运动补记并注入篮球示例，验证净活动热量与 Apple 健康去重说明：
 xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoExercise
+# 自动打开常见食物并预选一个大号水煮蛋，验证标准份量 → 可食克重 → 营养换算：
+xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoCommonFood
+# 把“常吃与最近”移到今日页顶部，验证 30 天排序、一键再记与撤销：
+xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoRepeatFoods
 ```
 
 模拟器注意：无摄像头（拍照/实时扫码不可用，扫码页会自动降级为手动输码）、无健康数据（所以有 DemoMode）。真机才能完整测 HealthKit 和相机。机器上已有 iPhone 17 Pro 模拟器（iOS 26.5）。

@@ -7,6 +7,8 @@
 - 从 **Apple 健康** 读取体重、体脂率、身高、年龄、性别、活动能量
 - 动态计算每日总消耗（TDEE）和减重所需热量缺口，实时显示 **今天还能吃多少千卡**
 - 四种饮食记录方式：**极速拍照 / 账单识别**（可选 Mac mini 私有桥）、**扫商品条形码**（优先本地缓存 / Open Food Facts，查不到可直接本机 OCR 扫包装营养表）、**搜索常见食物**、**手动输入**
+- 鸡蛋、香蕉、苹果等常见食物提供“半个 / 一个 / 大小”等标准份量与可食部分克重参考，也可随时改成实际克重
+- 首页按最近 30 天自动整理“常吃与最近”：跨至少两天吃过的食物优先显示，并可按上次份量一键记录与撤销
 - 体重 / 体脂趋势图、目标轨迹对比、按当前速度预计达成日期
 - 7 / 30 天热量、缺口与蛋白质 / 碳水 / 脂肪趋势，本周缺口统计截至昨天
 - 不戴手表时可手动记录篮球、跑步等运动，并避免与 Apple 健康活动能量重复计算
@@ -33,6 +35,10 @@ xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoCapture
 xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoNutritionLabel
 # 7 / 30 天趋势与本周缺口演示
 xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoTrends
+# 常见食物标准份量：预选一个大号水煮蛋
+xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoCommonFood
+# “常吃与最近”排序、标签和一键再记
+xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoRepeatFoods
 ```
 
 包装营养表识别由 Apple Vision 在设备上完成，支持常见中英文标签、kJ 转千卡、每份 / 每 100 克 / 每 100 毫升 / 整包 / 每个以及基础双列标签。`%DV` 不会被当成营养含量；低置信或近似值必须人工核对。确认后的商品会按条码保存在 SwiftData，之后重复扫码直接进入食用量页面。原始标签照片不会保存或上传。

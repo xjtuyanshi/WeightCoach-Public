@@ -64,7 +64,7 @@ enum DemoMode {
         ProcessInfo.processInfo.arguments.contains("-demoBodyCompositionBottom")
     }
 
-    /// 直接打开常见食物参考库，并预选 150 克西兰花。
+    /// 直接打开常见食物参考库，并预选一个大号水煮蛋的标准份量。
     static var demoCommonFoodEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains("-demoCommonFood")
     }
@@ -72,6 +72,11 @@ enum DemoMode {
     /// 打开统一食物录入，并展示输入单字“西”后的即时联想。
     static var demoFoodAutocompleteEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains("-demoFoodAutocomplete")
+    }
+
+    /// 把「常吃 + 最近」移到今日页顶部，便于稳定截图验收排序、标签和一键再记。
+    static var demoRepeatFoodsEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains("-demoRepeatFoods")
     }
 
     /// 打开星巴克定制饮品核对页，显示当前用户订单的估算拆分。
@@ -371,6 +376,95 @@ enum DemoMode {
                       portionText: text("1.0 份（60g）", "1.0 份（60g）", "1 serving (60 g)"),
                       mealType: .snack, source: .barcode, date: at(15, 40)),
         ]
+        if demoRepeatFoodsEnabled {
+            func onPreviousDay(
+                _ daysAgo: Int,
+                hour: Int,
+                minute: Int
+            ) -> Date {
+                let day = calendar.date(
+                    byAdding: .day,
+                    value: -daysAgo,
+                    to: now
+                ) ?? now
+                return calendar.date(
+                    bySettingHour: hour,
+                    minute: minute,
+                    second: 0,
+                    of: day
+                ) ?? day
+            }
+            // 只有这个专用场景才注入跨日历史，避免改变其他演示和趋势数据。
+            foods.append(contentsOf: [
+                FoodEntry(
+                    name: "Kirkland Signature Protein Bar",
+                    calories: 190,
+                    protein: 21,
+                    carbs: 22,
+                    fat: 7,
+                    portionText: text("1.0 份（60g）", "1.0 份（60g）", "1 serving (60 g)"),
+                    mealType: .snack,
+                    source: .barcode,
+                    date: onPreviousDay(1, hour: 15, minute: 40)
+                ),
+                FoodEntry(
+                    name: "Kirkland Signature Protein Bar",
+                    calories: 190,
+                    protein: 21,
+                    carbs: 22,
+                    fat: 7,
+                    portionText: text("1.0 份（60g）", "1.0 份（60g）", "1 serving (60 g)"),
+                    mealType: .snack,
+                    source: .barcode,
+                    date: onPreviousDay(4, hour: 15, minute: 40)
+                ),
+                FoodEntry(
+                    name: text("水煮蛋", "水煮蛋", "Hard-boiled egg"),
+                    calories: 72,
+                    protein: 6,
+                    carbs: 0.4,
+                    fat: 5,
+                    portionText: text("1 个", "1 個", "1 egg"),
+                    mealType: .breakfast,
+                    source: .manual,
+                    date: onPreviousDay(1, hour: 8, minute: 12)
+                ),
+                FoodEntry(
+                    name: text("水煮蛋", "水煮蛋", "Hard-boiled egg"),
+                    calories: 72,
+                    protein: 6,
+                    carbs: 0.4,
+                    fat: 5,
+                    portionText: text("1 个", "1 個", "1 egg"),
+                    mealType: .breakfast,
+                    source: .manual,
+                    date: onPreviousDay(5, hour: 8, minute: 12)
+                ),
+                FoodEntry(
+                    name: text("美式咖啡", "美式咖啡", "Americano"),
+                    calories: 15,
+                    protein: 1,
+                    carbs: 2,
+                    fat: 0,
+                    portionText: text("Grande（演示）", "Grande（示範）", "Grande (demo)"),
+                    mealType: .breakfast,
+                    source: .brandCalculator,
+                    date: onPreviousDay(2, hour: 8, minute: 15),
+                    caffeineMg: 225
+                ),
+                FoodEntry(
+                    name: text("全麦面包", "全麥麵包", "Whole-wheat bread"),
+                    calories: 160,
+                    protein: 8,
+                    carbs: 28,
+                    fat: 2,
+                    portionText: text("2 片", "2 片", "2 slices"),
+                    mealType: .lunch,
+                    source: .ai,
+                    date: onPreviousDay(3, hour: 12, minute: 36)
+                ),
+            ])
+        }
         if demoTrendsEnabled {
             for daysAgo in 1...29 {
                 // 留出一个完全未记录饮食的日期，不能在趋势中伪装成 0 千卡。

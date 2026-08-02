@@ -182,6 +182,97 @@ final class CommonFoodCatalogTests: XCTestCase {
         XCTAssertEqual(draft.date, date)
     }
 
+    func testEggStandardPortionsUseEdibleWeightAndDefaultToOneLargeEgg() throws {
+        let egg = try XCTUnwrap(
+            CommonFoodCatalog.food(id: "egg-hard-boiled")
+        )
+        let defaultPortion = try XCTUnwrap(egg.defaultStandardPortion)
+
+        XCTAssertEqual(defaultPortion.id, "one-large-egg")
+        XCTAssertEqual(defaultPortion.grams, 50)
+        XCTAssertEqual(
+            defaultPortion.searchSummary(
+                locale: Locale(identifier: "zh-Hans")
+            ),
+            "大号 1 个约 50 克可食部分"
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(
+                egg.nutrition(forGrams: defaultPortion.grams)?.energyKcal
+            ).doubleValue,
+            77.5,
+            accuracy: 0.001
+        )
+    }
+
+    func testBananaStandardPortionsKeepUSDAFruitSizes() throws {
+        let banana = try XCTUnwrap(
+            CommonFoodCatalog.food(id: "banana-raw")
+        )
+
+        XCTAssertEqual(
+            banana.standardPortions.map(\.grams),
+            [101, 118, 136]
+        )
+        XCTAssertEqual(banana.defaultStandardPortion?.grams, 118)
+        XCTAssertEqual(
+            try XCTUnwrap(
+                banana.nutrition(forGrams: 118)?.energyKcal
+            ).doubleValue,
+            105.02,
+            accuracy: 0.001
+        )
+    }
+
+    func testStandardPortionDescriptionsSupportAllAppLanguages() throws {
+        let egg = try XCTUnwrap(
+            CommonFoodCatalog.food(id: "egg-hard-boiled")
+        )
+        let portion = try XCTUnwrap(egg.defaultStandardPortion)
+
+        XCTAssertEqual(
+            portion.savedDescription(locale: Locale(identifier: "zh-Hans")),
+            "大号 1 个（约 50 克）"
+        )
+        XCTAssertEqual(
+            portion.savedDescription(locale: Locale(identifier: "zh-Hant-TW")),
+            "大號 1 個（約 50 公克）"
+        )
+        XCTAssertEqual(
+            portion.savedDescription(locale: Locale(identifier: "en-US")),
+            "1 large egg (about 50 g)"
+        )
+        XCTAssertEqual(
+            portion.approximateWeightDescription(
+                locale: Locale(identifier: "zh-Hant-TW")
+            ),
+            "約 50 公克"
+        )
+    }
+
+    func testDraftCanPreserveHumanReadableStandardPortion() throws {
+        let bread = try XCTUnwrap(
+            CommonFoodCatalog.food(id: "whole-wheat-bread")
+        )
+        let portion = try XCTUnwrap(bread.defaultStandardPortion)
+        let draft = try XCTUnwrap(
+            bread.draft(
+                grams: portion.grams,
+                mealType: .breakfast,
+                date: .now,
+                locale: Locale(identifier: "en-US"),
+                portionText: portion.savedDescription(
+                    locale: Locale(identifier: "en-US")
+                )
+            )
+        )
+
+        XCTAssertEqual(draft.amountValue, 32)
+        XCTAssertEqual(draft.amountUnit, .grams)
+        XCTAssertEqual(draft.portionText, "1 slice (about 32 g)")
+        XCTAssertEqual(draft.calories, 80.64, accuracy: 0.001)
+    }
+
     func testFoodNameAndPreparationUseSelectedLanguage() throws {
         let broccoli = try XCTUnwrap(
             CommonFoodCatalog.food(id: "broccoli-raw")

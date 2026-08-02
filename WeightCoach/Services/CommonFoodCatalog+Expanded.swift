@@ -72,7 +72,31 @@ extension CommonFoodCatalog {
                 fatG: 0.12,
                 fiberG: 2.4
             ),
-            fdcID: 169097
+            fdcID: 169097,
+            standardPortions: [
+                CommonFoodStandardPortion(
+                    id: "small-orange",
+                    grams: 96,
+                    simplifiedLabel: "小号 1 个",
+                    traditionalLabel: "小號 1 個",
+                    englishLabel: "1 small orange"
+                ),
+                CommonFoodStandardPortion(
+                    id: "medium-orange",
+                    grams: 131,
+                    simplifiedLabel: "中等 1 个",
+                    traditionalLabel: "中等 1 個",
+                    englishLabel: "1 medium orange",
+                    isDefault: true
+                ),
+                CommonFoodStandardPortion(
+                    id: "large-orange",
+                    grams: 184,
+                    simplifiedLabel: "大号 1 个",
+                    traditionalLabel: "大號 1 個",
+                    englishLabel: "1 large orange"
+                ),
+            ]
         ),
         CommonFoodReference(
             id: "pineapple-raw",
@@ -114,7 +138,31 @@ extension CommonFoodCatalog {
                 fatG: 0.15,
                 fiberG: 3.3
             ),
-            fdcID: 168483
+            fdcID: 168483,
+            standardPortions: [
+                CommonFoodStandardPortion(
+                    id: "small-sweet-potato",
+                    grams: 60,
+                    simplifiedLabel: "小个 1 个",
+                    traditionalLabel: "小條 1 條",
+                    englishLabel: "1 small sweet potato"
+                ),
+                CommonFoodStandardPortion(
+                    id: "medium-sweet-potato",
+                    grams: 114,
+                    simplifiedLabel: "中等 1 个",
+                    traditionalLabel: "中等 1 條",
+                    englishLabel: "1 medium sweet potato",
+                    isDefault: true
+                ),
+                CommonFoodStandardPortion(
+                    id: "large-sweet-potato",
+                    grams: 180,
+                    simplifiedLabel: "大个 1 个",
+                    traditionalLabel: "大條 1 條",
+                    englishLabel: "1 large sweet potato"
+                ),
+            ]
         ),
         CommonFoodReference(
             id: "potato-baked",
@@ -128,7 +176,31 @@ extension CommonFoodCatalog {
                 fatG: 0.13,
                 fiberG: 2.2
             ),
-            fdcID: 170093
+            fdcID: 170093,
+            standardPortions: [
+                CommonFoodStandardPortion(
+                    id: "small-baked-potato",
+                    grams: 138,
+                    simplifiedLabel: "小号 1 个",
+                    traditionalLabel: "小號 1 個",
+                    englishLabel: "1 small potato"
+                ),
+                CommonFoodStandardPortion(
+                    id: "medium-baked-potato",
+                    grams: 173,
+                    simplifiedLabel: "中等 1 个",
+                    traditionalLabel: "中等 1 個",
+                    englishLabel: "1 medium potato",
+                    isDefault: true
+                ),
+                CommonFoodStandardPortion(
+                    id: "large-baked-potato",
+                    grams: 299,
+                    simplifiedLabel: "大号 1 个",
+                    traditionalLabel: "大號 1 個",
+                    englishLabel: "1 large potato"
+                ),
+            ]
         ),
         CommonFoodReference(
             id: "sweet-corn-cooked",
@@ -450,7 +522,31 @@ extension CommonFoodCatalog {
                 fatG: 3.5,
                 fiberG: 6
             ),
-            fdcID: 172688
+            fdcID: 172688,
+            standardPortions: [
+                CommonFoodStandardPortion(
+                    id: "one-bread-slice",
+                    grams: 32,
+                    simplifiedLabel: "1 片",
+                    traditionalLabel: "1 片",
+                    englishLabel: "1 slice",
+                    isDefault: true
+                ),
+                CommonFoodStandardPortion(
+                    id: "two-bread-slices",
+                    grams: 64,
+                    simplifiedLabel: "2 片",
+                    traditionalLabel: "2 片",
+                    englishLabel: "2 slices"
+                ),
+                CommonFoodStandardPortion(
+                    id: "three-bread-slices",
+                    grams: 96,
+                    simplifiedLabel: "3 片",
+                    traditionalLabel: "3 片",
+                    englishLabel: "3 slices"
+                ),
+            ]
         ),
         CommonFoodReference(
             id: "whole-milk",

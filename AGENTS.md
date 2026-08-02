@@ -41,6 +41,8 @@ xcrun --sdk iphonesimulator swiftc -typecheck -target arm64-apple-ios17.0-simula
 xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -uitab 0   # -uitab 0..4 直达对应 Tab
 # 自动打开演示餐盘，验证图片准备 → 自动识别 → 确认：
 xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoCapture
+# 自动打开一句话补记，验证文字解析 → 逐项核对 → 日期/餐次：
+xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoSentenceBackfill
 # 自动打开演示餐厅账单，验证菜品识别 → 整单食用比例 → 逐项确认：
 xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoReceipt
 # 自动打开演示包装营养表，验证本机 OCR 解析 → 低置信核对 → 商品缓存 → 份量：
@@ -61,7 +63,7 @@ xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoRepeatFoods
 2. **BMR**：有体脂率用 Katch-McArdle（370 + 21.6×瘦体重），否则 Mifflin-St Jeor。
 3. **每日缺口动态化**：`剩余kg × 7700 / 剩余天数`，钳位 [250, 1000] 千卡；预算下限男 1500 / 女 1200。
 4. **数据优先级**：HealthKit 数据优先，ProfileStore 里的身高/年龄/性别只是兜底；体重取 HealthKit 与本地记录中较新者。
-5. **AI 识图**：App 不跳转到外部聊天界面，也不在 iPhone 客户端保存云端 API Key。拍照、图片预处理、自动分析与结果确认只依赖 `FoodRecognitionProviding`；真实识别由使用者自行部署的 Mac 私有桥接提供。未配置时不得把演示 Provider 当成真实识别，也不得恢复客户端 Claude/OpenAI API。任何未来凭据仍只能进钥匙串，绝不硬编码、不进 UserDefaults、不进仓库。
+5. **AI 识别**：App 不跳转到外部聊天界面，也不在 iPhone 客户端保存云端 API Key。图片识别只依赖 `FoodRecognitionProviding`，一句话补记只依赖独立的 `FoodTextRecognitionProviding`；二者都通过每位使用者自己的 Mac mini 私有桥使用已登录的 ChatGPT 会话，客户端不得携带 prompt、API Key 或任意命令字段。文字原句只通过 Codex stdin 传递，不进进程参数或服务日志；文字请求使用规范 UUID v4，关闭页面或重新估算时必须以同一 ID 调用鉴权取消端点并先释放旧任务，避免占用单任务槽。日期和餐次由 App 决定且必须单独确认，所有文字估算都必须逐项人工确认后才调用 `FoodEntryWriter`。确认后编辑名称、份量或热量必须撤销该项确认并清空旧的派生营养值。不得把演示 Provider 当真实识别，也不得恢复客户端 Claude/OpenAI API。任何未来凭据仍只能进钥匙串，绝不硬编码、不进 UserDefaults、不进仓库。
 6. **条码**：本地 `FoodProduct` 缓存优先，未命中再查 Open Food Facts v2（免 Key，必须带自定义 User-Agent；`serving_quantity` 可能是字符串，解析用 JSONSerialization 容错）。仍查不到 → 直接扫描包装营养表：Apple Vision 本机 OCR，规则解析必须排除 `%DV`，低置信/近似值必须由用户确认，按条码缓存后下次秒开。原始标签照片不持久化、不上传。手动只填热量时营养素记 nil（别按 100g 折算）。
 7. 所有饮食记录会回写 HealthKit `dietaryEnergyConsumed`，体重/体脂回写对应类型。
 

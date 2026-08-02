@@ -8,11 +8,13 @@ struct DashboardView: View {
     @Environment(HealthKitManager.self) private var health
     @Environment(\.modelContext) private var modelContext
     @Environment(\.locale) private var locale
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \FoodEntry.date, order: .reverse) private var allFoods: [FoodEntry]
     @Query(sort: \WeightEntry.date, order: .reverse) private var localWeights: [WeightEntry]
     @Query(sort: \ExerciseEntry.startDate, order: .reverse) private var allExercises: [ExerciseEntry]
 
     @State private var showAIScan = false
+    @State private var showSentenceBackfill = false
     @State private var showBarcodeScan = false
     @State private var showCommonFoodSearch = false
     @State private var repeatingFoodKey: String?
@@ -164,12 +166,18 @@ struct DashboardView: View {
                 if DemoMode.demoTrendsEnabled {
                     showTrends = true
                 }
+                if DemoMode.demoSentenceBackfillEnabled {
+                    showSentenceBackfill = true
+                }
             }
             .task(id: weeklyTrendRefreshKey) {
                 await reloadWeeklyTrends()
             }
             .navigationDestination(isPresented: $showTrends) {
                 NutritionTrendsView()
+            }
+            .sheet(isPresented: $showSentenceBackfill) {
+                SentenceFoodBackfillView(defaultDate: .now)
             }
             .sheet(isPresented: $showAIScan) { AIFoodScanView(defaultDate: .now) }
             .sheet(isPresented: $showBarcodeScan) { BarcodeScanView(defaultDate: .now) }
@@ -215,6 +223,35 @@ struct DashboardView: View {
             Label("快速记录", systemImage: "bolt.fill")
                 .font(.headline)
 
+            Button {
+                showSentenceBackfill = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "text.bubble.fill")
+                        .font(.title3)
+                        .frame(width: 28)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(interfaceLocalized("一句话补记", locale: locale))
+                            .font(.subheadline.bold())
+                        Text(interfaceLocalized("例如：1 根烤肠、2 个鸡翅", locale: locale))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+                .background(Color.accentColor.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
+
             quickAddButtons
 
             if !repeatFoodCards.isEmpty {
@@ -229,12 +266,42 @@ struct DashboardView: View {
     }
 
     private var quickAddButtons: some View {
-        HStack(spacing: 12) {
-            quickButton("拍照识别", icon: "camera.viewfinder") { showAIScan = true }
-            quickButton("扫条形码", icon: "barcode.viewfinder") { showBarcodeScan = true }
-            quickButton("自行填写", icon: "magnifyingglass") {
-                showCommonFoodSearch = true
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 10) {
+                    photoQuickButton
+                    barcodeQuickButton
+                    manualQuickButton
+                }
+            } else if AppLanguage.system.resolvedLanguage(systemLocale: locale) == .english {
+                VStack(spacing: 10) {
+                    HStack(spacing: 12) {
+                        photoQuickButton
+                        barcodeQuickButton
+                    }
+                    manualQuickButton
+                }
+            } else {
+                HStack(spacing: 12) {
+                    photoQuickButton
+                    barcodeQuickButton
+                    manualQuickButton
+                }
             }
+        }
+    }
+
+    private var photoQuickButton: some View {
+        quickButton("拍照识别", icon: "camera.viewfinder") { showAIScan = true }
+    }
+
+    private var barcodeQuickButton: some View {
+        quickButton("扫条形码", icon: "barcode.viewfinder") { showBarcodeScan = true }
+    }
+
+    private var manualQuickButton: some View {
+        quickButton("自行填写", icon: "magnifyingglass") {
+            showCommonFoodSearch = true
         }
     }
 
@@ -375,13 +442,21 @@ struct DashboardView: View {
 
     private var repeatFoodSuggestionsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            if dynamicTypeSize.isAccessibilitySize {
                 Label("常吃与最近 · 点一下直接记", systemImage: "clock.arrow.circlepath")
                     .font(.subheadline.bold())
-                Spacer()
                 Text("按上次份量")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else {
+                HStack {
+                    Label("常吃与最近 · 点一下直接记", systemImage: "clock.arrow.circlepath")
+                        .font(.subheadline.bold())
+                    Spacer()
+                    Text("按上次份量")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -428,14 +503,14 @@ struct DashboardView: View {
                 Text(food.name)
                     .font(.subheadline.bold())
                     .foregroundStyle(.primary)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                 Text(
                     food.portionText
                         ?? interfaceLocalized("按上次记录", locale: locale)
                 )
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                 Text(
                     interfaceCalorieText(
                         food.calories.kcalText,
@@ -452,11 +527,17 @@ struct DashboardView: View {
                     )
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                 }
             }
-            .frame(width: 150, alignment: .topLeading)
-            .frame(minHeight: 105, alignment: .topLeading)
+            .frame(
+                width: dynamicTypeSize.isAccessibilitySize ? 240 : 150,
+                alignment: .topLeading
+            )
+            .frame(
+                minHeight: dynamicTypeSize.isAccessibilitySize ? 180 : 105,
+                alignment: .topLeading
+            )
             .padding(12)
             .background(
                 card.suggestion.isFrequent
@@ -579,8 +660,8 @@ struct DashboardView: View {
             HStack(spacing: 6) {
                 Image(systemName: icon)
                 Text(interfaceLocalized(title, locale: locale))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
             }
             .font(.subheadline.bold())
             .frame(maxWidth: .infinity)

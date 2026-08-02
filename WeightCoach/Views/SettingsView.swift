@@ -250,7 +250,7 @@ struct SettingsView: View {
                     switch recognitionStatus {
                     case .notConfigured:
                         Label(
-                            "尚未配置；照片不会上传，手动记录仍可使用",
+                            "尚未配置；照片和文字不会上传，手动记录仍可使用",
                             systemImage: "lock.shield"
                         )
                         .foregroundStyle(.secondary)
@@ -274,9 +274,9 @@ struct SettingsView: View {
                         Label("重新检测", systemImage: "arrow.clockwise")
                     }
                 } header: {
-                    Text("AI 拍照识别")
+                    Text("AI 识别")
                 } footer: {
-                    Text("每位使用者必须填写自己的 HTTPS 私有桥接地址。这里仅保存 URL，绝不能填写 API Key、密码或访问令牌。未配置时照片不会上传；临时照片在请求后删除，结果和份量仍需确认。")
+                    Text("每位使用者必须填写自己的 HTTPS 私有桥接地址。这里仅保存 URL，绝不能填写 API Key、密码或访问令牌。未配置时照片和文字都不会上传；桥接不持久化临时输入，结果和份量仍需确认。")
                 }
 
                 Section {
@@ -529,7 +529,7 @@ struct SettingsView: View {
         BridgeConfiguration.clear()
         bridgeStatusRequestID = UUID()
         bridgeURLText = ""
-        bridgeConfigurationMessage = "已清除并禁用 AI 桥接；照片不会上传。"
+        bridgeConfigurationMessage = "已清除并禁用 AI 桥接；照片和文字不会上传。"
         recognitionStatus = .notConfigured
     }
 }

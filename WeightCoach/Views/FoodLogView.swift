@@ -12,6 +12,7 @@ struct FoodLogView: View {
     @State private var selectedDate = Date()
     @State private var showManualAdd = false
     @State private var showAIScan = false
+    @State private var showSentenceBackfill = false
     @State private var showBarcodeScan = false
     @State private var isRepeatingFood = false
     @State private var undoEntry: FoodEntry?
@@ -30,15 +31,27 @@ struct FoodLogView: View {
 
     /// 记录用的时间：选中今天用当前时刻，选中过去的日期用当天中午
     private var entryDate: Date {
-        if Calendar.current.isDateInToday(selectedDate) { return .now }
-        return Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: selectedDate) ?? selectedDate
+        let now = Date.now
+        let boundedDate = min(selectedDate, now)
+        if Calendar.current.isDateInToday(boundedDate) { return now }
+        return Calendar.current.date(
+            bySettingHour: 12,
+            minute: 0,
+            second: 0,
+            of: boundedDate
+        ) ?? boundedDate
     }
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    DatePicker("日期", selection: $selectedDate, displayedComponents: .date)
+                    DatePicker(
+                        "日期",
+                        selection: $selectedDate,
+                        in: ...Date.now,
+                        displayedComponents: .date
+                    )
                     HStack {
                         Text("当日合计")
                         Spacer()
@@ -120,6 +133,11 @@ struct FoodLogView: View {
                             Label("拍照识别", systemImage: "camera.viewfinder")
                         }
                         Button {
+                            showSentenceBackfill = true
+                        } label: {
+                            Label("一句话补记", systemImage: "text.bubble.fill")
+                        }
+                        Button {
                             showBarcodeScan = true
                         } label: {
                             Label("扫码", systemImage: "barcode.viewfinder")
@@ -136,6 +154,9 @@ struct FoodLogView: View {
             }
             .sheet(isPresented: $showManualAdd) {
                 CommonFoodSearchView(defaultDate: entryDate)
+            }
+            .sheet(isPresented: $showSentenceBackfill) {
+                SentenceFoodBackfillView(defaultDate: entryDate)
             }
             .sheet(isPresented: $showAIScan) { AIFoodScanView(defaultDate: entryDate) }
             .sheet(isPresented: $showBarcodeScan) { BarcodeScanView(defaultDate: entryDate) }

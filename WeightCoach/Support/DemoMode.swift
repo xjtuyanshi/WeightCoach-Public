@@ -79,6 +79,11 @@ enum DemoMode {
         ProcessInfo.processInfo.arguments.contains("-demoRepeatFoods")
     }
 
+    /// 打开一句话补记，并自动演示“1 根烤肠、2 个鸡翅”的估算与确认流程。
+    static var demoSentenceBackfillEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains("-demoSentenceBackfill")
+    }
+
     /// 打开星巴克定制饮品核对页，显示当前用户订单的估算拆分。
     static var demoStarbucksEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains("-demoStarbucks")

@@ -13,7 +13,8 @@
       "enum": [
         "food_photo",
         "receipt_or_menu",
-        "non_food"
+        "non_food",
+        "text_description"
       ]
     },
     "items": {

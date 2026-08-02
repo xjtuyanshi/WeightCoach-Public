@@ -8,6 +8,7 @@ struct MacMiniBridgeHealth: Sendable, Equatable {
 enum MacMiniFoodRecognitionError: LocalizedError {
     case invalidImage
     case bridgeUnavailable
+    case bridgeNeedsUpgrade
     case unauthorized
     case busy
     case subscriptionUnavailable
@@ -31,6 +32,15 @@ enum MacMiniFoodRecognitionError: LocalizedError {
                 "暂时连不上 Mac mini。请确认 Mac mini 已开机、已登录 ChatGPT，并且手机已连接 Tailscale。",
                 locale: locale
             )
+        case .bridgeNeedsUpgrade:
+            switch AppLanguage.system.resolvedLanguage(systemLocale: locale) {
+            case .english:
+                return "The Mac mini bridge is an older version and does not support text food logging yet. Update and restart the WeightCoach bridge on the Mac mini."
+            case .traditionalChinese:
+                return "Mac mini 辨識橋接版本較舊，尚未支援一句話補記。請先更新並重新啟動 Mac mini 上的 WeightCoach 橋接服務。"
+            case .simplifiedChinese, .system:
+                return "Mac mini 识别桥接版本较旧，暂不支持一句话补记。请先更新并重启 Mac mini 上的 WeightCoach 桥接服务。"
+            }
         case .unauthorized:
             return interfaceLocalized(
                 "当前设备不在允许的 Tailscale 账户中，Mac mini 已拒绝识别请求。",
@@ -66,7 +76,10 @@ enum MacMiniFoodRecognitionError: LocalizedError {
     }
 }
 
-struct MacMiniFoodRecognitionProvider: FoodRecognitionProviding {
+struct MacMiniFoodRecognitionProvider:
+    FoodRecognitionProviding,
+    FoodTextRecognitionProviding
+{
     let availability: FoodRecognitionAvailability = .available
 
     private let baseURL: URL
@@ -112,25 +125,147 @@ struct MacMiniFoodRecognitionProvider: FoodRecognitionProviding {
         request.httpBody = try JSONEncoder().encode(payload)
 
         let data = try await perform(request)
+        let response = try decodedRecognitionResponse(from: data)
+        guard let inputKind = response.inputKind else {
+            // 缺少图片类型时无法安全区分餐盘与账单。旧桥必须升级，
+            // 不能把未知类型默认为餐盘而绕过账单确认与缩略图隐私规则。
+            throw MacMiniFoodRecognitionError.invalidResponse
+        }
+        switch inputKind {
+        case .foodPhoto, .receiptOrMenu:
+            break
+        case .nonFood:
+            guard response.foods.isEmpty else {
+                throw MacMiniFoodRecognitionError.invalidResponse
+            }
+        case .textDescription:
+            // 图片端点绝不能接受文本结果类型，否则会绕过输入类型边界。
+            throw MacMiniFoodRecognitionError.invalidResponse
+        }
+
+        return try recognizedFoods(
+            from: response,
+            inputKind: inputKind,
+            outputLanguage: resolvedLanguage
+        )
+    }
+
+    func analyze(text: String) async throws -> [RecognizedFood] {
+        try await analyze(
+            text: text,
+            outputLanguage: .simplifiedChinese
+        )
+    }
+
+    func analyze(
+        text: String,
+        outputLanguage: AppLanguage
+    ) async throws -> [RecognizedFood] {
+        try await analyze(
+            text: text,
+            outputLanguage: outputLanguage,
+            requestID: UUID()
+        )
+    }
+
+    func analyze(
+        text: String,
+        outputLanguage: AppLanguage,
+        requestID: UUID
+    ) async throws -> [RecognizedFood] {
+        let validatedText = try FoodTextRecognitionInput.validated(text)
+        let resolvedLanguage = outputLanguage.resolvedLanguage()
+        let payload = TextRecognitionRequest(
+            schemaVersion: 1,
+            requestID: requestID.uuidString.lowercased(),
+            text: validatedText,
+            outputLanguage: resolvedLanguage.rawValue
+        )
+        var request = URLRequest(url: endpoint("v1/recognize-text"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = requestTimeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("WeightCoach-iOS/1", forHTTPHeaderField: "User-Agent")
+        request.httpBody = try JSONEncoder().encode(payload)
+
+        let data = try await perform(
+            request,
+            mapsNotFoundToBridgeUpgrade: true
+        )
+        let response = try decodedRecognitionResponse(from: data)
+        guard response.inputKind == .textDescription else {
+            // 文本端点只能返回 text_description；旧图片类型和未知类型一律失败关闭。
+            throw MacMiniFoodRecognitionError.invalidResponse
+        }
+
+        var foods = try recognizedFoods(
+            from: response,
+            inputKind: .textDescription,
+            outputLanguage: resolvedLanguage
+        )
+        guard !foods.isEmpty else {
+            throw MacMiniFoodRecognitionError.invalidResponse
+        }
+        for index in foods.indices {
+            // 自然语言无法证明份量、品牌或烹调方式；即使远端漏标也必须人工确认。
+            foods[index].needsConfirmation = true
+        }
+        return foods
+    }
+
+    func cancelTextAnalysis(requestID: UUID) async -> Bool {
+        let payload = TextRecognitionCancellationRequest(
+            schemaVersion: 1,
+            requestID: requestID.uuidString.lowercased()
+        )
+        guard let body = try? JSONEncoder().encode(payload) else { return false }
+
+        var request = URLRequest(url: endpoint("v1/cancel-text"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = min(requestTimeout, 10)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("WeightCoach-iOS/1", forHTTPHeaderField: "User-Agent")
+        request.httpBody = body
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200..<300).contains(httpResponse.statusCode) else {
+                return false
+            }
+            let acknowledgement = try JSONDecoder().decode(
+                TextRecognitionCancellationResponse.self,
+                from: data
+            )
+            return acknowledgement.schemaVersion == 1
+                && acknowledgement.requestID == requestID.uuidString.lowercased()
+                && acknowledgement.status == "cancelled"
+        } catch {
+            // 关闭页面时仍是尽力而为；重试流程会读取 false 并停止发出新请求。
+            return false
+        }
+    }
+
+    private func decodedRecognitionResponse(
+        from data: Data
+    ) throws -> RecognitionResponse {
         let response: RecognitionResponse
         do {
             response = try JSONDecoder().decode(RecognitionResponse.self, from: data)
         } catch {
             throw MacMiniFoodRecognitionError.invalidResponse
         }
-
         guard response.schemaVersion == 1 else {
             throw MacMiniFoodRecognitionError.invalidResponse
         }
-        guard let inputKind = response.inputKind else {
-            // 缺少图片类型时无法安全区分餐盘与账单。旧桥必须升级，
-            // 不能把未知类型默认为餐盘而绕过账单确认与缩略图隐私规则。
-            throw MacMiniFoodRecognitionError.invalidResponse
-        }
-        guard inputKind != .nonFood || response.foods.isEmpty else {
-            throw MacMiniFoodRecognitionError.invalidResponse
-        }
+        return response
+    }
 
+    private func recognizedFoods(
+        from response: RecognitionResponse,
+        inputKind: RecognitionInputKind,
+        outputLanguage: AppLanguage
+    ) throws -> [RecognizedFood] {
         var foods = try response.foods.map {
             try validatedFood($0, inputKind: inputKind)
         }
@@ -138,7 +273,7 @@ struct MacMiniFoodRecognitionProvider: FoodRecognitionProviding {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         if !warnings.isEmpty, !foods.isEmpty {
-            let separator = resolvedLanguage == .english ? "; " : "；"
+            let separator = outputLanguage == .english ? "; " : "；"
             let warningText = warnings.joined(separator: separator)
             foods[0].note = [foods[0].note, warningText]
                 .compactMap { $0 }
@@ -175,14 +310,21 @@ struct MacMiniFoodRecognitionProvider: FoodRecognitionProviding {
         baseURL.appending(path: path)
     }
 
-    private func perform(_ request: URLRequest) async throws -> Data {
+    private func perform(
+        _ request: URLRequest,
+        mapsNotFoundToBridgeUpgrade: Bool = false
+    ) async throws -> Data {
         do {
             let (data, response) = try await session.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw MacMiniFoodRecognitionError.invalidResponse
             }
             guard (200..<300).contains(httpResponse.statusCode) else {
-                throw error(for: httpResponse.statusCode, data: data)
+                throw error(
+                    for: httpResponse.statusCode,
+                    data: data,
+                    mapsNotFoundToBridgeUpgrade: mapsNotFoundToBridgeUpgrade
+                )
             }
             return data
         } catch is CancellationError {
@@ -210,9 +352,15 @@ struct MacMiniFoodRecognitionProvider: FoodRecognitionProviding {
         }
     }
 
-    private func error(for statusCode: Int, data: Data) -> MacMiniFoodRecognitionError {
+    private func error(
+        for statusCode: Int,
+        data: Data,
+        mapsNotFoundToBridgeUpgrade: Bool
+    ) -> MacMiniFoodRecognitionError {
         let errorResponse = try? JSONDecoder().decode(BridgeErrorResponse.self, from: data)
         switch statusCode {
+        case 404 where mapsNotFoundToBridgeUpgrade:
+            return .bridgeNeedsUpgrade
         case 401, 403:
             return .unauthorized
         case 408, 504:
@@ -322,6 +470,42 @@ private struct RecognitionRequest: Encodable {
         case schemaVersion = "schema_version"
         case imageBase64 = "image_base64"
         case outputLanguage = "output_language"
+    }
+}
+
+private struct TextRecognitionRequest: Encodable {
+    let schemaVersion: Int
+    let requestID: String
+    let text: String
+    let outputLanguage: String
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case requestID = "request_id"
+        case text
+        case outputLanguage = "output_language"
+    }
+}
+
+private struct TextRecognitionCancellationRequest: Encodable {
+    let schemaVersion: Int
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case requestID = "request_id"
+    }
+}
+
+private struct TextRecognitionCancellationResponse: Decodable {
+    let schemaVersion: Int
+    let requestID: String
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case requestID = "request_id"
+        case status
     }
 }
 

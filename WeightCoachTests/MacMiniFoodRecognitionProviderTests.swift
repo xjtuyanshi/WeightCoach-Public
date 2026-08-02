@@ -85,6 +85,287 @@ final class MacMiniFoodRecognitionProviderTests: XCTestCase {
         )
     }
 
+    func testAnalyzeTextSendsStrictVersionedPayloadAndMapsResult() async throws {
+        let requestID = try XCTUnwrap(
+            UUID(uuidString: "12345678-1234-4abc-8abc-1234567890ab")
+        )
+        BridgeURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/v1/recognize-text")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(
+                request.value(forHTTPHeaderField: "Content-Type"),
+                "application/json"
+            )
+            let body = try Self.bodyData(for: request)
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: body) as? [String: Any]
+            )
+            XCTAssertEqual(
+                Set(json.keys),
+                Set(["schema_version", "request_id", "text", "output_language"]),
+                "文本端点不得携带图片、prompt、API Key 或其他自由字段"
+            )
+            XCTAssertEqual(json["schema_version"] as? Int, 1)
+            XCTAssertEqual(
+                json["request_id"] as? String,
+                "12345678-1234-4abc-8abc-1234567890ab"
+            )
+            XCTAssertEqual(json["text"] as? String, "我吃了一根烤肠、两个鸡翅")
+            XCTAssertEqual(json["output_language"] as? String, "zh-Hant")
+            return Self.response(status: 200, json: Self.validTextResponse())
+        }
+
+        let foods = try await makeProvider().analyze(
+            text: "  我吃了一根烤肠、两个鸡翅\n",
+            outputLanguage: .traditionalChinese,
+            requestID: requestID
+        )
+
+        XCTAssertEqual(foods.count, 1)
+        XCTAssertEqual(foods[0].name, "烤肠")
+        XCTAssertEqual(foods[0].inputKind, .textDescription)
+        XCTAssertTrue(foods[0].needsConfirmation)
+    }
+
+    func testCancelTextAnalysisSendsOnlyVersionAndMatchingRequestID() async throws {
+        let requestID = try XCTUnwrap(
+            UUID(uuidString: "12345678-1234-4abc-8abc-1234567890ab")
+        )
+        BridgeURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/v1/cancel-text")
+            XCTAssertEqual(request.httpMethod, "POST")
+            let body = try Self.bodyData(for: request)
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: body) as? [String: Any]
+            )
+            XCTAssertEqual(
+                Set(json.keys),
+                Set(["schema_version", "request_id"])
+            )
+            XCTAssertEqual(json["schema_version"] as? Int, 1)
+            XCTAssertEqual(
+                json["request_id"] as? String,
+                "12345678-1234-4abc-8abc-1234567890ab"
+            )
+            return Self.response(
+                status: 200,
+                json: [
+                    "schema_version": 1,
+                    "request_id": "12345678-1234-4abc-8abc-1234567890ab",
+                    "status": "cancelled",
+                ]
+            )
+        }
+
+        let confirmed = await makeProvider().cancelTextAnalysis(
+            requestID: requestID
+        )
+        XCTAssertTrue(confirmed)
+    }
+
+    func testCancelTextAnalysisRejectsUnconfirmedOrMismatchedAcknowledgement() async throws {
+        let requestID = try XCTUnwrap(
+            UUID(uuidString: "12345678-1234-4abc-8abc-1234567890ab")
+        )
+        BridgeURLProtocol.handler = { _ in
+            Self.response(
+                status: 202,
+                json: [
+                    "schema_version": 1,
+                    "request_id": "12345678-1234-4abc-8abc-1234567890ab",
+                    "status": "cancellation_requested",
+                ]
+            )
+        }
+        let legacyAcknowledgement = await makeProvider().cancelTextAnalysis(
+            requestID: requestID
+        )
+        XCTAssertFalse(legacyAcknowledgement)
+
+        BridgeURLProtocol.handler = { _ in
+            Self.response(
+                status: 200,
+                json: [
+                    "schema_version": 1,
+                    "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    "status": "cancelled",
+                ]
+            )
+        }
+        let mismatchedAcknowledgement = await makeProvider().cancelTextAnalysis(
+            requestID: requestID
+        )
+        XCTAssertFalse(mismatchedAcknowledgement)
+    }
+
+    func testAnalyzeTextRejectsEmptyOversizedAndExcessUTF8Inputs() async throws {
+        let exactMaximumUTF8 = String(repeating: "😀", count: 500)
+        XCTAssertEqual(exactMaximumUTF8.unicodeScalars.count, 500)
+        XCTAssertEqual(exactMaximumUTF8.utf8.count, 2_000)
+        XCTAssertNoThrow(try FoodTextRecognitionInput.validated(exactMaximumUTF8))
+
+        let excessUTF8 = String(repeating: "👨‍👩‍👧‍👦", count: 251)
+        XCTAssertLessThanOrEqual(
+            excessUTF8.count,
+            FoodTextRecognitionInput.maximumCharacterCount
+        )
+        XCTAssertGreaterThan(
+            excessUTF8.utf8.count,
+            FoodTextRecognitionInput.maximumUTF8ByteCount
+        )
+        let cases: [(text: String, expected: FoodTextRecognitionInputError)] = [
+            ("  \n", .empty),
+            (String(repeating: "a", count: 501), .tooLong),
+            (excessUTF8, .tooLong),
+            ("吃了一个\u{0000}鸡蛋", .invalidCharacters),
+        ]
+
+        BridgeURLProtocol.handler = { _ in
+            XCTFail("无效文本必须在发出网络请求前失败")
+            return Self.response(status: 500, json: [:])
+        }
+
+        for testCase in cases {
+            do {
+                _ = try await makeProvider().analyze(text: testCase.text)
+                XCTFail("无效文本不应返回识别结果")
+            } catch let error as FoodTextRecognitionInputError {
+                XCTAssertEqual(error, testCase.expected)
+            }
+        }
+    }
+
+    func testAnalyzeTextMapsMissingEndpointToBridgeUpgrade() async throws {
+        BridgeURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/v1/recognize-text")
+            return Self.response(
+                status: 404,
+                json: [
+                    "error": [
+                        "code": "not_found",
+                        "message": "Not found",
+                    ]
+                ]
+            )
+        }
+
+        do {
+            _ = try await makeProvider().analyze(text: "一根香蕉")
+            XCTFail("旧桥缺少文本端点时必须提示升级")
+        } catch let error as MacMiniFoodRecognitionError {
+            guard case .bridgeNeedsUpgrade = error else {
+                return XCTFail("应映射为 bridgeNeedsUpgrade，实际为 \(error)")
+            }
+        }
+    }
+
+    func testAnalyzeTextRejectsEveryNonTextInputKind() async throws {
+        for inputKind in ["food_photo", "receipt_or_menu", "non_food"] {
+            BridgeURLProtocol.handler = { _ in
+                var response = Self.validTextResponse()
+                response["input_kind"] = inputKind
+                if inputKind == "non_food" {
+                    response["foods"] = []
+                }
+                return Self.response(status: 200, json: response)
+            }
+
+            do {
+                _ = try await makeProvider().analyze(text: "一根香蕉")
+                XCTFail("文本端点不得接受 \(inputKind)")
+            } catch let error as MacMiniFoodRecognitionError {
+                guard case .invalidResponse = error else {
+                    return XCTFail("应返回 invalidResponse，实际为 \(error)")
+                }
+            }
+        }
+    }
+
+    func testAnalyzeTextForcesConfirmationAndRejectsEmptyFoods() async throws {
+        BridgeURLProtocol.handler = { _ in
+            var response = Self.validTextResponse()
+            var foods = try XCTUnwrap(response["foods"] as? [[String: Any]])
+            foods[0]["needs_confirmation"] = false
+            response["foods"] = foods
+            return Self.response(status: 200, json: response)
+        }
+
+        let foods = try await makeProvider().analyze(text: "一根烤肠")
+        XCTAssertTrue(foods[0].needsConfirmation)
+
+        BridgeURLProtocol.handler = { _ in
+            var response = Self.validTextResponse()
+            response["foods"] = []
+            return Self.response(status: 200, json: response)
+        }
+
+        do {
+            _ = try await makeProvider().analyze(text: "一根烤肠")
+            XCTFail("文本识别不能把空项目列表当成成功")
+        } catch let error as MacMiniFoodRecognitionError {
+            guard case .invalidResponse = error else {
+                return XCTFail("应返回 invalidResponse，实际为 \(error)")
+            }
+        }
+    }
+
+    func testAnalyzeImageRejectsTextDescriptionInputKind() async throws {
+        BridgeURLProtocol.handler = { _ in
+            var response = Self.validResponse()
+            response["input_kind"] = "text_description"
+            return Self.response(status: 200, json: response)
+        }
+
+        do {
+            _ = try await makeProvider().analyze(
+                jpegData: Data([0xFF, 0xD8, 0xFF])
+            )
+            XCTFail("图片端点不得接受 text_description")
+        } catch let error as MacMiniFoodRecognitionError {
+            guard case .invalidResponse = error else {
+                return XCTFail("应返回 invalidResponse，实际为 \(error)")
+            }
+        }
+    }
+
+    func testDemoTextRecognitionReturnsLocalizedConfirmableItems() async throws {
+        let foods = try await DemoFoodTextRecognitionProvider().analyze(
+            text: "I ate one sausage and two chicken wings",
+            outputLanguage: .english
+        )
+
+        XCTAssertEqual(foods.map(\.name), ["Grilled sausage", "Chicken wings"])
+        XCTAssertTrue(foods.allSatisfy { $0.inputKind == .textDescription })
+        XCTAssertTrue(foods.allSatisfy(\.needsConfirmation))
+        XCTAssertTrue(foods.allSatisfy { food in
+            guard let lower = food.calorieLowerBound,
+                  let upper = food.calorieUpperBound else {
+                return false
+            }
+            return lower <= food.calories && food.calories <= upper
+        })
+    }
+
+    func testTextProviderFactoryFailsClosedWithoutBridgeConfiguration() async {
+        let provider = FoodTextRecognitionProviderFactory.make(
+            bridgeResolution: nil
+        )
+        guard case .unavailable = provider.availability else {
+            return XCTFail("未配置桥接时文本识别必须明确不可用")
+        }
+
+        do {
+            _ = try await provider.analyze(text: "一根香蕉")
+            XCTFail("未配置桥接时不能伪装成真实识别")
+        } catch let error as FoodRecognitionProviderError {
+            guard case .macTextBridgePending = error else {
+                return XCTFail("应返回 macTextBridgePending，实际为 \(error)")
+            }
+        } catch {
+            XCTFail("错误类型不正确：\(error)")
+        }
+    }
+
     func testDemoReceiptProviderReturnsConfirmableWholeOrderItems() async throws {
         let foods = try await DemoReceiptFoodRecognitionProvider().analyze(
             jpegData: Data([0xFF, 0xD8, 0xFF])
@@ -485,6 +766,11 @@ final class MacMiniFoodRecognitionProviderTests: XCTestCase {
             ),
             "Mac mini recognition failed. Try again or enter the food manually."
         )
+        XCTAssertTrue(
+            MacMiniFoodRecognitionError.bridgeNeedsUpgrade.message(
+                locale: Locale(identifier: "zh-Hant")
+            ).contains("版本較舊")
+        )
     }
 
     private func makeProvider() -> MacMiniFoodRecognitionProvider {
@@ -516,6 +802,29 @@ final class MacMiniFoodRecognitionProviderTests: XCTestCase {
                     "confidence": 0.84,
                     "needs_confirmation": true,
                     "note": "请核对",
+                ]
+            ],
+            "warnings": [],
+        ]
+    }
+
+    private static func validTextResponse() -> [String: Any] {
+        [
+            "schema_version": 1,
+            "input_kind": "text_description",
+            "foods": [
+                [
+                    "name": "烤肠",
+                    "portion": "1 根",
+                    "calories": 180,
+                    "protein": 7,
+                    "carbs": 5,
+                    "fat": 14,
+                    "calories_min": 140,
+                    "calories_max": 240,
+                    "confidence": 0.68,
+                    "needs_confirmation": true,
+                    "note": "请核对份量",
                 ]
             ],
             "warnings": [],

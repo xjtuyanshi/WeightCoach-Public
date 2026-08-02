@@ -3,6 +3,7 @@ import Foundation
 enum RecognitionInputKind: String, Codable, Sendable {
     case foodPhoto = "food_photo"
     case receiptOrMenu = "receipt_or_menu"
+    case textDescription = "text_description"
     case nonFood = "non_food"
 }
 
@@ -78,14 +79,118 @@ extension FoodRecognitionProviding {
     }
 }
 
+protocol FoodTextRecognitionProviding {
+    var availability: FoodRecognitionAvailability { get }
+    func analyze(text: String) async throws -> [RecognizedFood]
+    func analyze(
+        text: String,
+        outputLanguage: AppLanguage
+    ) async throws -> [RecognizedFood]
+    func analyze(
+        text: String,
+        outputLanguage: AppLanguage,
+        requestID: UUID
+    ) async throws -> [RecognizedFood]
+    /// Returns true only after the bridge confirms the shared recognition slot
+    /// is no longer occupied by the cancelled request.
+    func cancelTextAnalysis(requestID: UUID) async -> Bool
+}
+
+extension FoodTextRecognitionProviding {
+    func analyze(
+        text: String,
+        outputLanguage: AppLanguage
+    ) async throws -> [RecognizedFood] {
+        try await analyze(text: text)
+    }
+
+    func analyze(
+        text: String,
+        outputLanguage: AppLanguage,
+        requestID: UUID
+    ) async throws -> [RecognizedFood] {
+        try await analyze(text: text, outputLanguage: outputLanguage)
+    }
+
+    func cancelTextAnalysis(requestID: UUID) async -> Bool { false }
+}
+
+enum FoodTextRecognitionInputError: LocalizedError, Equatable {
+    case empty
+    case tooLong
+    case invalidCharacters
+
+    var errorDescription: String? {
+        message(locale: AppLanguage.sharedSelection().locale)
+    }
+
+    func message(locale: Locale) -> String {
+        switch AppLanguage.system.resolvedLanguage(systemLocale: locale) {
+        case .english:
+            switch self {
+            case .empty:
+                return "Describe what you ate before starting the estimate."
+            case .tooLong:
+                return "Keep the description within 500 characters."
+            case .invalidCharacters:
+                return "The description contains unsupported control characters."
+            }
+        case .traditionalChinese:
+            switch self {
+            case .empty:
+                return "請先描述你吃了什麼，再開始估算。"
+            case .tooLong:
+                return "請將描述縮短到 500 個字元以內。"
+            case .invalidCharacters:
+                return "描述中包含不支援的控制字元。"
+            }
+        case .simplifiedChinese, .system:
+            switch self {
+            case .empty:
+                return "请先描述你吃了什么，再开始估算。"
+            case .tooLong:
+                return "请将描述缩短到 500 个字符以内。"
+            case .invalidCharacters:
+                return "描述中包含不支持的控制字符。"
+            }
+        }
+    }
+}
+
+enum FoodTextRecognitionInput {
+    static let maximumCharacterCount = 500
+    static let maximumUTF8ByteCount = 2_000
+
+    static func validated(_ text: String) throws -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw FoodTextRecognitionInputError.empty
+        }
+        guard trimmed.unicodeScalars.count <= maximumCharacterCount,
+              trimmed.utf8.count <= maximumUTF8ByteCount else {
+            throw FoodTextRecognitionInputError.tooLong
+        }
+        let allowedControlScalars: Set<UInt32> = [9, 10, 13]
+        guard !trimmed.unicodeScalars.contains(where: {
+            $0.value < 32 && !allowedControlScalars.contains($0.value)
+        }) else {
+            throw FoodTextRecognitionInputError.invalidCharacters
+        }
+        return trimmed
+    }
+}
+
 enum FoodRecognitionProviderError: LocalizedError {
     case macBridgePending
+    case macTextBridgePending
     case demoRecognitionFailed
 
     var errorDescription: String? {
         switch self {
         case .macBridgePending:
             return "Mac mini 本地识别尚未接入。照片已保留，你可以先手动补充食物；接入后这里会自动识别，不会跳转到 ChatGPT。"
+        case .macTextBridgePending:
+            return "尚未配置 Mac mini 私有识别桥接。你输入的内容仍保留，可以稍后重试或手动记录。"
         case .demoRecognitionFailed:
             return "演示：模拟识别失败，用于验证照片保留和重试流程。"
         }
@@ -100,6 +205,16 @@ struct PendingMacFoodRecognitionProvider: FoodRecognitionProviding {
 
     func analyze(jpegData: Data) async throws -> [RecognizedFood] {
         throw FoodRecognitionProviderError.macBridgePending
+    }
+}
+
+struct PendingMacFoodTextRecognitionProvider: FoodTextRecognitionProviding {
+    let availability: FoodRecognitionAvailability = .unavailable(
+        message: "尚未配置私有识别桥接。你仍可手动记录；请在设置中填写自己的 HTTPS 桥接地址，不要填写 API Key。"
+    )
+
+    func analyze(text: String) async throws -> [RecognizedFood] {
+        throw FoodRecognitionProviderError.macTextBridgePending
     }
 }
 
@@ -183,6 +298,84 @@ struct DemoFoodRecognitionProvider: FoodRecognitionProviding {
             ),
         ]
     }
+}
+
+/// 只在演示模式下使用，模拟“一句话补记”的解析与确认结果。
+struct DemoFoodTextRecognitionProvider: FoodTextRecognitionProviding {
+    let availability: FoodRecognitionAvailability = .available
+
+    func analyze(text: String) async throws -> [RecognizedFood] {
+        try await analyze(
+            text: text,
+            outputLanguage: .simplifiedChinese
+        )
+    }
+
+    func analyze(
+        text: String,
+        outputLanguage: AppLanguage
+    ) async throws -> [RecognizedFood] {
+        _ = try FoodTextRecognitionInput.validated(text)
+        try await Task.sleep(for: .milliseconds(240))
+        try Task.checkCancellation()
+        let language = outputLanguage.resolvedLanguage()
+        return [
+            RecognizedFood(
+                name: DemoLocalizedText(
+                    simplified: "烤肠",
+                    traditional: "烤香腸",
+                    english: "Grilled sausage"
+                ).value(for: language),
+                portion: DemoLocalizedText(
+                    simplified: "1 根",
+                    traditional: "1 根",
+                    english: "1 sausage"
+                ).value(for: language),
+                calories: 180,
+                protein: 7,
+                carbs: 5,
+                fat: 14,
+                calorieLowerBound: 140,
+                calorieUpperBound: 240,
+                confidence: 0.68,
+                needsConfirmation: true,
+                note: DemoLocalizedText(
+                    simplified: "香肠大小和配方未知，请确认份量",
+                    traditional: "香腸大小和配方未知，請確認份量",
+                    english: "Sausage size and recipe are unknown; confirm the portion"
+                ).value(for: language),
+                inputKind: .textDescription
+            ),
+            RecognizedFood(
+                name: DemoLocalizedText(
+                    simplified: "鸡翅",
+                    traditional: "雞翅",
+                    english: "Chicken wings"
+                ).value(for: language),
+                portion: DemoLocalizedText(
+                    simplified: "2 个",
+                    traditional: "2 個",
+                    english: "2 wings"
+                ).value(for: language),
+                calories: 220,
+                protein: 18,
+                carbs: 2,
+                fat: 16,
+                calorieLowerBound: 160,
+                calorieUpperBound: 300,
+                confidence: 0.66,
+                needsConfirmation: true,
+                note: DemoLocalizedText(
+                    simplified: "烹调方式和是否带酱未知，请核对",
+                    traditional: "烹調方式和是否帶醬未知，請核對",
+                    english: "Cooking method and sauce are unknown; please confirm"
+                ).value(for: language),
+                inputKind: .textDescription
+            ),
+        ]
+    }
+
+    func cancelTextAnalysis(requestID: UUID) async -> Bool { true }
 }
 
 /// 只在 -demoData -demoReceipt 下使用：模拟 Mac mini 对餐厅账单的整单识别。
@@ -515,6 +708,20 @@ enum FoodRecognitionProviderFactory {
         }
         guard let bridgeResolution else {
             return PendingMacFoodRecognitionProvider()
+        }
+        return MacMiniFoodRecognitionProvider(baseURL: bridgeResolution.baseURL)
+    }
+}
+
+enum FoodTextRecognitionProviderFactory {
+    static func make(
+        bridgeResolution: BridgeConfigurationResolution? = BridgeConfiguration.current()
+    ) -> any FoodTextRecognitionProviding {
+        if DemoMode.isActive && !DemoMode.realRecognitionEnabled {
+            return DemoFoodTextRecognitionProvider()
+        }
+        guard let bridgeResolution else {
+            return PendingMacFoodTextRecognitionProvider()
         }
         return MacMiniFoodRecognitionProvider(baseURL: bridgeResolution.baseURL)
     }

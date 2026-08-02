@@ -8,6 +8,7 @@ import binascii
 import json
 import math
 import os
+import signal
 import subprocess
 import tempfile
 import threading
@@ -23,11 +24,19 @@ SERVICE_NAME = "WeightCoach Mac mini Bridge"
 SCHEMA_VERSION = 1
 MAX_REQUEST_BYTES = 7_000_000
 MAX_IMAGE_BYTES = 5_000_000
+MAX_TEXT_REQUEST_BYTES = 8_192
+MAX_TEXT_CANCEL_REQUEST_BYTES = 512
+MAX_TEXT_CHARACTERS = 500
+MAX_TEXT_BYTES = 2_000
 MAX_RESULT_BYTES = 1_000_000
 MAX_RECOGNIZED_ITEMS = 24
+MAX_CANCEL_TOMBSTONES = 256
+CANCEL_TOMBSTONE_SECONDS = 180
+CANCELLATION_CONFIRM_TIMEOUT_SECONDS = 8.0
 ROOT = Path(__file__).resolve().parent
 RESPONSE_SCHEMA_PATH = ROOT / "response-schema.json"
 PROMPT_PATH = ROOT / "recognition-prompt.txt"
+TEXT_PROMPT_PATH = ROOT / "text-recognition-prompt.txt"
 RECOGNITION_SLOT = threading.BoundedSemaphore(value=1)
 DISABLED_CODEX_FEATURES = (
     "shell_tool",
@@ -121,6 +130,114 @@ class RecognitionRequestData:
     output_language: str
 
 
+@dataclass(frozen=True)
+class TextRecognitionRequestData:
+    request_id: str
+    text: str
+    output_language: str
+
+
+@dataclass(frozen=True)
+class TextCancellationRequestData:
+    request_id: str
+
+
+@dataclass
+class ActiveTextRecognition:
+    process: Optional[Any] = None
+    cancellation_requested: bool = False
+
+
+class TextRecognitionRegistry:
+    """Thread-safe lifecycle registry for cancellable text recognition jobs."""
+
+    def __init__(
+        self,
+        tombstone_seconds: int = CANCEL_TOMBSTONE_SECONDS,
+        maximum_tombstones: int = MAX_CANCEL_TOMBSTONES,
+    ) -> None:
+        self._lock = threading.Lock()
+        self._active: Dict[str, ActiveTextRecognition] = {}
+        self._cancelled_before_start: Dict[str, float] = {}
+        self._tombstone_seconds = tombstone_seconds
+        self._maximum_tombstones = maximum_tombstones
+
+    def reserve(self, request_id: str) -> str:
+        """Return reserved, duplicate, or cancelled for a validated ID."""
+        with self._lock:
+            self._prune_locked()
+            if request_id in self._active:
+                return "duplicate"
+            if request_id in self._cancelled_before_start:
+                return "cancelled"
+            self._active[request_id] = ActiveTextRecognition()
+            return "reserved"
+
+    def attach_process(self, request_id: str, process: Any) -> bool:
+        """Attach the process and report whether cancellation already won."""
+        with self._lock:
+            active = self._active.get(request_id)
+            if active is None:
+                return True
+            active.process = process
+            return active.cancellation_requested
+
+    def request_cancel(self, request_id: str) -> Optional[Any]:
+        """Mark active or not-yet-arrived work cancelled and return its process."""
+        with self._lock:
+            self._prune_locked()
+            active = self._active.get(request_id)
+            if active is None:
+                self._remember_cancel_locked(request_id)
+                return None
+            active.cancellation_requested = True
+            return active.process
+
+    def is_cancelled(self, request_id: str) -> bool:
+        with self._lock:
+            active = self._active.get(request_id)
+            return active is None or active.cancellation_requested
+
+    def complete(self, request_id: str) -> bool:
+        """Atomically let either successful completion or cancellation win."""
+        with self._lock:
+            active = self._active.pop(request_id, None)
+            if active is None:
+                return False
+            if active.cancellation_requested:
+                self._remember_cancel_locked(request_id)
+                return False
+            return True
+
+    def finish(self, request_id: str) -> None:
+        with self._lock:
+            active = self._active.pop(request_id, None)
+            if active is not None and active.cancellation_requested:
+                self._remember_cancel_locked(request_id)
+
+    def _remember_cancel_locked(self, request_id: str) -> None:
+        self._cancelled_before_start[request_id] = (
+            time.monotonic() + self._tombstone_seconds
+        )
+        if len(self._cancelled_before_start) <= self._maximum_tombstones:
+            return
+        oldest_request_id = min(
+            self._cancelled_before_start,
+            key=self._cancelled_before_start.get,
+        )
+        self._cancelled_before_start.pop(oldest_request_id, None)
+
+    def _prune_locked(self) -> None:
+        now = time.monotonic()
+        expired = [
+            request_id
+            for request_id, deadline in self._cancelled_before_start.items()
+            if deadline <= now
+        ]
+        for request_id in expired:
+            self._cancelled_before_start.pop(request_id, None)
+
+
 def sanitized_environment() -> Dict[str, str]:
     allowed_keys = (
         "HOME",
@@ -209,7 +326,12 @@ def decode_request_body(body: bytes) -> RecognitionRequestData:
             "请求字段不完整或包含不允许的字段。",
             400,
         )
-    if payload.get("schema_version") != SCHEMA_VERSION:
+    schema_version = payload.get("schema_version")
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != SCHEMA_VERSION
+    ):
         raise BridgeFailure(
             "unsupported_schema",
             "App 与 Mac mini 的识别协议版本不一致。",
@@ -245,6 +367,142 @@ def decode_request_body(body: bytes) -> RecognitionRequestData:
     return RecognitionRequestData(
         jpeg_data=image,
         output_language=output_language,
+    )
+
+
+def validated_text_request_id(value: Any) -> str:
+    if not isinstance(value, str) or len(value) != 36:
+        raise BridgeFailure(
+            "invalid_request_id",
+            "文本识别请求 ID 无效。",
+            400,
+        )
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError):
+        raise BridgeFailure(
+            "invalid_request_id",
+            "文本识别请求 ID 无效。",
+            400,
+        )
+    canonical = str(parsed)
+    if parsed.version != 4 or value != canonical:
+        raise BridgeFailure(
+            "invalid_request_id",
+            "文本识别请求 ID 无效。",
+            400,
+        )
+    return canonical
+
+
+def decode_text_request_body(body: bytes) -> TextRecognitionRequestData:
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise BridgeFailure(
+            "invalid_request",
+            "请求格式无效，请重新输入后重试。",
+            400,
+        )
+
+    if not isinstance(payload, dict):
+        raise BridgeFailure("invalid_request", "请求格式无效。", 400)
+    required_fields = {
+        "schema_version",
+        "request_id",
+        "text",
+        "output_language",
+    }
+    if set(payload) != required_fields:
+        raise BridgeFailure(
+            "invalid_request",
+            "请求字段不完整或包含不允许的字段。",
+            400,
+        )
+    schema_version = payload.get("schema_version")
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != SCHEMA_VERSION
+    ):
+        raise BridgeFailure(
+            "unsupported_schema",
+            "App 与 Mac mini 的识别协议版本不一致。",
+            400,
+        )
+
+    request_id = validated_text_request_id(payload.get("request_id"))
+    text = payload.get("text")
+    if not isinstance(text, str):
+        raise BridgeFailure("invalid_text", "补记内容无效。", 400)
+    text = text.strip()
+    try:
+        encoded_text = text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise BridgeFailure("invalid_text", "补记内容无效。", 400)
+    if (
+        not text
+        or len(text) > MAX_TEXT_CHARACTERS
+        or len(encoded_text) > MAX_TEXT_BYTES
+        or any(
+            ord(character) < 32 and character not in "\n\r\t"
+            for character in text
+        )
+    ):
+        raise BridgeFailure(
+            "invalid_text",
+            "请输入 1 到 500 个字符的饮食描述。",
+            400,
+        )
+
+    output_language = payload.get("output_language")
+    if (
+        not isinstance(output_language, str)
+        or output_language not in OUTPUT_LANGUAGE_INSTRUCTIONS
+    ):
+        raise BridgeFailure(
+            "invalid_request",
+            "不支持请求的输出语言。",
+            400,
+        )
+    return TextRecognitionRequestData(
+        request_id=request_id,
+        text=text,
+        output_language=output_language,
+    )
+
+
+def decode_text_cancellation_body(body: bytes) -> TextCancellationRequestData:
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise BridgeFailure(
+            "invalid_request",
+            "取消请求格式无效。",
+            400,
+        )
+
+    if not isinstance(payload, dict):
+        raise BridgeFailure("invalid_request", "取消请求格式无效。", 400)
+    if set(payload) != {"schema_version", "request_id"}:
+        raise BridgeFailure(
+            "invalid_request",
+            "取消请求字段不完整或包含不允许的字段。",
+            400,
+        )
+    schema_version = payload.get("schema_version")
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != SCHEMA_VERSION
+    ):
+        raise BridgeFailure(
+            "unsupported_schema",
+            "App 与 Mac mini 的识别协议版本不一致。",
+            400,
+        )
+    return TextCancellationRequestData(
+        request_id=validated_text_request_id(payload.get("request_id"))
     )
 
 
@@ -293,6 +551,67 @@ def build_codex_command(
         prompt,
     ])
     return command
+
+
+def build_text_codex_command(
+    config: BridgeConfig,
+    result_path: Path,
+) -> List[str]:
+    command = [
+        str(config.codex_path),
+        "--strict-config",
+        "--ask-for-approval",
+        "never",
+    ]
+    for feature in DISABLED_CODEX_FEATURES:
+        command.extend(["--disable", feature])
+    command.extend([
+        "exec",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "--model",
+        config.model,
+        "--output-schema",
+        str(RESPONSE_SCHEMA_PATH),
+        "--output-last-message",
+        str(result_path),
+        "-",
+    ])
+    return command
+
+
+def build_text_codex_stdin(
+    text: str,
+    output_language: str = "zh-Hans",
+) -> bytes:
+    language_instruction = OUTPUT_LANGUAGE_INSTRUCTIONS.get(output_language)
+    if language_instruction is None:
+        raise BridgeFailure(
+            "invalid_request",
+            "不支持请求的输出语言。",
+            400,
+        )
+    prompt_template = TEXT_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    prompt = prompt_template.replace(
+        "{{OUTPUT_LANGUAGE_INSTRUCTION}}",
+        language_instruction,
+    )
+    untrusted_payload = json.dumps(
+        {"untrusted_food_log_text": text},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    stdin_payload = (
+        prompt
+        + "\n\nBEGIN_UNTRUSTED_FOOD_LOG_JSON\n"
+        + untrusted_payload
+        + "\nEND_UNTRUSTED_FOOD_LOG_JSON\n"
+    )
+    return stdin_payload.encode("utf-8")
 
 
 def _validated_number(
@@ -394,9 +713,60 @@ def _receipt_note(
     return prefix + separator + suffix
 
 
+def _text_note(
+    note: Optional[str],
+    output_language: str,
+) -> str:
+    """Guarantee that text estimates cannot look like observed portions."""
+    localized_requirements = {
+        "zh-Hans": (
+            "根据文字描述估算",
+            "未观察到实物或实际份量",
+            "；",
+            "。",
+        ),
+        "zh-Hant": (
+            "根據文字描述估算",
+            "未觀察到實物或實際份量",
+            "；",
+            "。",
+        ),
+        "en": (
+            "Estimated from the text description",
+            "the food and actual portion were not observed",
+            "; ",
+            ".",
+        ),
+    }
+    first_fact, second_fact, separator, terminator = localized_requirements[
+        output_language
+    ]
+    required_phrases = (first_fact, second_fact)
+    comparable_note = (note or "").lower()
+    missing_phrases = [
+        phrase
+        for phrase in required_phrases
+        if phrase.lower() not in comparable_note
+    ]
+    if not missing_phrases:
+        return note or separator.join(required_phrases) + terminator
+
+    suffix = separator.join(missing_phrases) + terminator
+    if not note:
+        return suffix
+
+    maximum_length = 220
+    prefix_length = maximum_length - len(separator) - len(suffix)
+    prefix = note[: max(0, prefix_length)].rstrip("；。; ")
+    if not prefix:
+        return suffix
+    return prefix + separator + suffix
+
+
 def normalize_model_result(
     payload: Any,
     output_language: str = "zh-Hans",
+    allowed_input_kinds: Optional[tuple[str, ...]] = None,
 ) -> Dict[str, Any]:
     if output_language not in OUTPUT_LANGUAGE_INSTRUCTIONS:
         raise BridgeFailure(
@@ -429,13 +799,18 @@ def normalize_model_result(
     if input_kind is None:
         raise BridgeFailure(
             "invalid_model_result",
-            "模型没有返回图片类型；已停止处理以避免把账单误当成餐盘。",
+            "模型没有返回输入类型；已停止处理以避免错误分类。",
             502,
         )
-    if input_kind not in ("food_photo", "receipt_or_menu", "non_food"):
+    allowed_kinds = (
+        allowed_input_kinds
+        if allowed_input_kinds is not None
+        else ("food_photo", "receipt_or_menu", "non_food")
+    )
+    if input_kind not in allowed_kinds:
         raise BridgeFailure(
             "invalid_model_result",
-            "模型返回了无效的图片类型。",
+            "模型返回了无效的输入类型。",
             502,
         )
     if input_kind == "non_food" and items:
@@ -500,6 +875,8 @@ def normalize_model_result(
         )
         if input_kind == "receipt_or_menu":
             note = _receipt_note(note, output_language)
+        elif input_kind == "text_description":
+            note = _text_note(note, output_language)
         foods.append(
             {
                 "name": _validated_text(
@@ -660,6 +1037,199 @@ def run_recognition(
     }
 
 
+def _signal_text_process_group(process: Any, process_signal: int) -> None:
+    try:
+        os.killpg(process.pid, process_signal)
+    except ProcessLookupError:
+        return
+    except OSError:
+        try:
+            process.send_signal(process_signal)
+        except (OSError, ProcessLookupError):
+            return
+
+
+def terminate_text_process(process: Any, grace_seconds: float = 0.75) -> None:
+    """Terminate only the dedicated text-recognition process group."""
+    if process.poll() is not None:
+        return
+    _signal_text_process_group(process, signal.SIGTERM)
+    try:
+        process.wait(timeout=grace_seconds)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    _signal_text_process_group(process, signal.SIGKILL)
+    try:
+        process.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        return
+
+
+def request_text_cancellation(
+    registry: TextRecognitionRegistry,
+    request_id: str,
+) -> None:
+    process = registry.request_cancel(request_id)
+    if process is not None:
+        terminate_text_process(process)
+
+
+def _text_cancellation_failure() -> BridgeFailure:
+    return BridgeFailure(
+        "recognition_cancelled",
+        "这次文字识别已取消。",
+        409,
+    )
+
+
+def run_text_recognition(
+    config: BridgeConfig,
+    text: str,
+    request_id: str,
+    output_language: str = "zh-Hans",
+    registry: Optional[TextRecognitionRegistry] = None,
+) -> Dict[str, Any]:
+    request_id = validated_text_request_id(request_id)
+    active_registry = registry or TextRecognitionRegistry()
+    reservation = active_registry.reserve(request_id)
+    if reservation == "duplicate":
+        raise BridgeFailure(
+            "duplicate_request",
+            "相同的文字识别请求正在处理中。",
+            409,
+        )
+    if reservation == "cancelled":
+        raise _text_cancellation_failure()
+
+    completed = False
+    started = time.monotonic()
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="weightcoach-text-recognition-"
+        ) as temporary_directory:
+            temp_path = Path(temporary_directory)
+            result_path = temp_path / "result.json"
+            stdout_path = temp_path / "codex-stdout.log"
+            stderr_path = temp_path / "codex-stderr.log"
+
+            command = build_text_codex_command(
+                config,
+                result_path,
+            )
+            stdin_payload = build_text_codex_stdin(text, output_language)
+            try:
+                with stdout_path.open("wb") as stdout_file, stderr_path.open(
+                    "wb"
+                ) as stderr_file:
+                    process = subprocess.Popen(
+                        command,
+                        stdin=subprocess.PIPE,
+                        stdout=stdout_file,
+                        stderr=stderr_file,
+                        env=sanitized_environment(),
+                        start_new_session=True,
+                    )
+                    if active_registry.attach_process(request_id, process):
+                        terminate_text_process(process)
+                    try:
+                        process.communicate(
+                            input=stdin_payload,
+                            timeout=config.timeout_seconds,
+                        )
+                    except subprocess.TimeoutExpired:
+                        terminate_text_process(process)
+                        try:
+                            process.communicate(timeout=1)
+                        except subprocess.TimeoutExpired:
+                            pass
+                        if active_registry.is_cancelled(request_id):
+                            raise _text_cancellation_failure()
+                        raise BridgeFailure(
+                            "recognition_timeout",
+                            "这次识别等待超时，请重试。",
+                            504,
+                        )
+            except BridgeFailure:
+                raise
+            except OSError:
+                if active_registry.is_cancelled(request_id):
+                    raise _text_cancellation_failure()
+                raise BridgeFailure(
+                    "bridge_unavailable",
+                    "Mac mini 上的识别程序无法启动。",
+                    503,
+                )
+
+            if active_registry.is_cancelled(request_id):
+                raise _text_cancellation_failure()
+            if process.returncode != 0:
+                diagnostic = (
+                    read_file_tail(stdout_path) + read_file_tail(stderr_path)
+                ).lower()
+                subscription_markers = (
+                    "logged out",
+                    "login",
+                    "authentication",
+                    "rate limit",
+                    "usage limit",
+                    "quota",
+                )
+                if any(
+                    marker in diagnostic for marker in subscription_markers
+                ):
+                    raise BridgeFailure(
+                        "subscription_unavailable",
+                        "Mac mini 上的 ChatGPT 登录或订阅额度暂时不可用。",
+                        503,
+                    )
+                raise BridgeFailure(
+                    "recognition_failed",
+                    "这次没有得到可靠结果，请修改描述或手动填写。",
+                    502,
+                )
+
+            try:
+                if result_path.stat().st_size > MAX_RESULT_BYTES:
+                    raise ValueError("result too large")
+                model_payload = json.loads(
+                    result_path.read_text(encoding="utf-8")
+                )
+            except (
+                OSError,
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+                ValueError,
+            ):
+                raise BridgeFailure(
+                    "invalid_model_result",
+                    "模型没有返回有效的结构化结果，请重试。",
+                    502,
+                )
+
+        normalized = normalize_model_result(
+            model_payload,
+            output_language,
+            allowed_input_kinds=("text_description",),
+        )
+        response = {
+            "schema_version": SCHEMA_VERSION,
+            "analysis_id": request_id,
+            "model": config.model,
+            "elapsed_ms": int((time.monotonic() - started) * 1_000),
+            "input_kind": normalized["input_kind"],
+            "foods": normalized["foods"],
+            "warnings": normalized["warnings"],
+        }
+        if not active_registry.complete(request_id):
+            raise _text_cancellation_failure()
+        completed = True
+        return response
+    finally:
+        if not completed:
+            active_registry.finish(request_id)
+
+
 def read_file_tail(path: Path, maximum_bytes: int = 65_536) -> str:
     try:
         with path.open("rb") as file:
@@ -679,6 +1249,12 @@ class BridgeHTTPServer(ThreadingHTTPServer):
     def __init__(self, address: Any, config: BridgeConfig) -> None:
         super().__init__(address, BridgeRequestHandler)
         self.config = config
+        self.text_recognitions = TextRecognitionRegistry(
+            tombstone_seconds=max(
+                CANCEL_TOMBSTONE_SECONDS,
+                config.timeout_seconds + 30,
+            )
+        )
 
 
 class BridgeRequestHandler(BaseHTTPRequestHandler):
@@ -703,6 +1279,10 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                     "codex_authenticated": status["authenticated"],
                     "codex_version": status["version"],
                     "model": self.server.config.model,
+                    "capabilities": [
+                        "image_recognition",
+                        "text_backfill",
+                    ],
                 },
             )
         except BridgeFailure as error:
@@ -712,7 +1292,11 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
         request_id = uuid.uuid4().hex
         try:
             self._authorize()
-            if self.path != "/v1/recognize":
+            if self.path not in (
+                "/v1/recognize",
+                "/v1/recognize-text",
+                "/v1/cancel-text",
+            ):
                 raise BridgeFailure("not_found", "接口不存在。", 404)
             content_type = self.headers.get("Content-Type", "")
             if not content_type.lower().startswith("application/json"):
@@ -728,28 +1312,91 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                 raise BridgeFailure(
                     "invalid_request", "请求长度无效。", 411
                 )
-            if not 0 < length <= MAX_REQUEST_BYTES:
+            if self.path == "/v1/cancel-text":
+                maximum_request_bytes = MAX_TEXT_CANCEL_REQUEST_BYTES
+            elif self.path == "/v1/recognize-text":
+                maximum_request_bytes = MAX_TEXT_REQUEST_BYTES
+            else:
+                maximum_request_bytes = MAX_REQUEST_BYTES
+            if not 0 < length <= maximum_request_bytes:
                 raise BridgeFailure(
                     "request_too_large",
                     "请求为空或超过大小限制。",
                     413,
                 )
             body = self.rfile.read(length)
-            recognition_request = decode_request_body(body)
+            if self.path == "/v1/cancel-text":
+                cancellation = decode_text_cancellation_body(body)
+                cancellation_started = time.monotonic()
+                request_text_cancellation(
+                    self.server.text_recognitions,
+                    cancellation.request_id,
+                )
+                remaining = CANCELLATION_CONFIRM_TIMEOUT_SECONDS - (
+                    time.monotonic() - cancellation_started
+                )
+                if remaining <= 0 or not RECOGNITION_SLOT.acquire(
+                    timeout=remaining
+                ):
+                    raise BridgeFailure(
+                        "cancellation_timeout",
+                        "上一项识别尚未确认停止，请稍后重试。",
+                        504,
+                    )
+                # Release before writing HTTP 200 so the acknowledgement cannot
+                # become visible to the client while the old slot is still held.
+                RECOGNITION_SLOT.release()
+                self._send_json(
+                    200,
+                    {
+                        "schema_version": SCHEMA_VERSION,
+                        "request_id": cancellation.request_id,
+                        "status": "cancelled",
+                    },
+                )
+                print(
+                    "{} request={} status=cancelled".format(
+                        SERVICE_NAME,
+                        request_id,
+                    ),
+                    flush=True,
+                )
+                return
+            if self.path == "/v1/recognize-text":
+                text_request = decode_text_request_body(body)
+                image_request = None
+            else:
+                image_request = decode_request_body(body)
+                text_request = None
 
             if not RECOGNITION_SLOT.acquire(blocking=False):
                 raise BridgeFailure(
                     "busy",
-                    "Mac mini 正在识别上一张照片，请稍后重试。",
+                    "Mac mini 正在处理上一项识别，请稍后重试。",
                     429,
                 )
             try:
-                result = run_recognition(
-                    self.server.config,
-                    recognition_request.jpeg_data,
-                    request_id,
-                    recognition_request.output_language,
-                )
+                if text_request is not None:
+                    result = run_text_recognition(
+                        self.server.config,
+                        text_request.text,
+                        text_request.request_id,
+                        text_request.output_language,
+                        self.server.text_recognitions,
+                    )
+                elif image_request is not None:
+                    result = run_recognition(
+                        self.server.config,
+                        image_request.jpeg_data,
+                        request_id,
+                        image_request.output_language,
+                    )
+                else:
+                    raise BridgeFailure(
+                        "invalid_request",
+                        "请求格式无效。",
+                        400,
+                    )
             finally:
                 RECOGNITION_SLOT.release()
             self._send_json(200, result)
@@ -831,7 +1478,11 @@ def main() -> None:
         raise SystemExit(
             "Codex CLI not found at {}".format(config.codex_path)
         )
-    if not RESPONSE_SCHEMA_PATH.is_file() or not PROMPT_PATH.is_file():
+    if (
+        not RESPONSE_SCHEMA_PATH.is_file()
+        or not PROMPT_PATH.is_file()
+        or not TEXT_PROMPT_PATH.is_file()
+    ):
         raise SystemExit("Bridge schema or prompt file is missing.")
 
     server = BridgeHTTPServer(("127.0.0.1", config.port), config)

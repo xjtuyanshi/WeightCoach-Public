@@ -6,7 +6,7 @@
 
 - 从 **Apple 健康** 读取体重、体脂率、身高、年龄、性别、活动能量
 - 动态计算每日总消耗（TDEE）和减重所需热量缺口，实时显示 **今天还能吃多少千卡**
-- 四种饮食记录方式：**极速拍照 / 账单识别**（可选 Mac mini 私有桥）、**扫商品条形码**（优先本地缓存 / Open Food Facts，查不到可直接本机 OCR 扫包装营养表）、**搜索常见食物**、**手动输入**
+- 五种饮食记录方式：**一句话补记**、**极速拍照 / 账单识别**（可选 Mac mini 私有桥）、**扫商品条形码**（优先本地缓存 / Open Food Facts，查不到可直接本机 OCR 扫包装营养表）、**搜索常见食物**、**手动输入**
 - 鸡蛋、香蕉、苹果等常见食物提供“半个 / 一个 / 大小”等标准份量与可食部分克重参考，也可随时改成实际克重
 - 首页按最近 30 天自动整理“常吃与最近”：跨至少两天吃过的食物优先显示，并可按上次份量一键记录与撤销
 - 体重 / 体脂趋势图、目标轨迹对比、按当前速度预计达成日期
@@ -31,6 +31,8 @@
 
 ```bash
 xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoCapture
+# 一句话补记：自动填入示例 → AI 估算 → 逐项核对 → 选择日期和餐次
+xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoSentenceBackfill
 # 包装营养表：演示 OCR → 核对标橙字段 → 缓存商品 → 选择食用量
 xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoNutritionLabel
 # 7 / 30 天趋势与本周缺口演示
@@ -44,6 +46,8 @@ xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoRepeatFoods
 包装营养表识别由 Apple Vision 在设备上完成，支持常见中英文标签、kJ 转千卡、每份 / 每 100 克 / 每 100 毫升 / 整包 / 每个以及基础双列标签。`%DV` 不会被当成营养含量；低置信或近似值必须人工核对。确认后的商品会按条码保存在 SwiftData，之后重复扫码直接进入食用量页面。原始标签照片不会保存或上传。
 
 餐厅账单或菜单识别不会把账单照片保存为饮食缩略图，也不会把整单默认算成一个人吃完。保存前必须选择整单、1/2、1/4、3/4，或逐项核对实际吃到的内容。单张照片无法可靠测量重量、隐藏烹调油或所有定制项，所有 AI 结果都应在 App 内确认。
+
+一句话补记会把饮食描述发送到每位使用者自己配置的 Mac mini 私有桥，再由 Mac mini 使用已登录的 ChatGPT 会话进行云端估算；App 不包含 API Key，也不会跳转到 ChatGPT。日期和餐次只由 App 中的选择决定，AI 结果不会自动保存，必须单独核对日期 / 餐次并逐项核对名称、份量和热量后才会写入 App 与 Apple 健康。核对后若再编辑名称、份量或热量，确认会自动失效，旧的派生营养值也会清空，避免保存互相矛盾的数据。关闭页面或重新估算时，App 还会用不含原文的请求 ID 通知 Mac mini 终止旧任务，避免继续占用订阅额度和单任务识别槽。
 
 ## 热量计算逻辑
 

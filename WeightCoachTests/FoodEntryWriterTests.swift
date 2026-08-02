@@ -454,6 +454,49 @@ final class FoodEntryWriterTests: XCTestCase {
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<FoodEntry>()), 0)
     }
 
+    func testSaveReturnsAfterLocalCommitWithoutWaitingForHealthKit() async throws {
+        let context = try makeContext()
+        let reminders = ReminderScheduler()
+        let health = ControlledDietaryEnergyHealth()
+        let completion = TestCompletionFlag()
+        let saveTask = Task<[FoodEntry], Error> {
+            let entries = try await FoodEntryWriter.save(
+                drafts: [
+                    FoodEntryDraft(
+                        name: "快捷保存",
+                        calories: 160,
+                        mealType: .snack,
+                        source: .quickRepeat
+                    )
+                ],
+                context: context,
+                health: health,
+                reminders: reminders
+            )
+            await completion.markComplete()
+            return entries
+        }
+
+        while !(await health.saveGate.hasStarted) {
+            await Task.yield()
+        }
+        var saveCompleted = await completion.isComplete
+        for _ in 0..<20 where !saveCompleted {
+            await Task.yield()
+            saveCompleted = await completion.isComplete
+        }
+
+        XCTAssertTrue(saveCompleted)
+        let entries = try await saveTask.value
+        let entry = try XCTUnwrap(entries.first)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<FoodEntry>()), 1)
+        XCTAssertEqual(entry.healthKitSyncStatus, .pending)
+
+        await health.saveGate.release()
+        await FoodEntryWriter.waitForPendingHealthWrites(for: entries)
+        XCTAssertEqual(entry.healthKitSyncStatus, .synced)
+    }
+
     func testFailedHealthWriteRetainsUUIDForIdempotentDelete() async throws {
         let context = try makeContext()
         let reminders = ReminderScheduler()
@@ -482,6 +525,7 @@ final class FoodEntryWriterTests: XCTestCase {
         let entry = try XCTUnwrap(
             try context.fetch(FetchDescriptor<FoodEntry>()).first
         )
+        await FoodEntryWriter.waitForPendingHealthWrites(for: [entry])
         let sampleUUID = try XCTUnwrap(entry.healthKitSampleUUID)
         XCTAssertEqual(entry.healthKitSyncStatus, .uncertain)
 
@@ -515,6 +559,7 @@ final class FoodEntryWriterTests: XCTestCase {
             reminders: reminders
         )
         let entry = try XCTUnwrap(entries.first)
+        await FoodEntryWriter.waitForPendingHealthWrites(for: entries)
         let firstUUID = try XCTUnwrap(entry.healthKitSampleUUID)
 
         XCTAssertEqual(entry.healthKitSyncStatus, .uncertain)

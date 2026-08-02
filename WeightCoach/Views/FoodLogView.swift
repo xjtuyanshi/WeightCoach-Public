@@ -25,10 +25,6 @@ struct FoodLogView: View {
         allFoods.filter { Calendar.current.isDate($0.date, inSameDayAs: selectedDate) }
     }
 
-    private var dayTotal: Double {
-        dayFoods.reduce(0) { $0 + $1.calories }
-    }
-
     /// 记录用的时间：选中今天用当前时刻，选中过去的日期用当天中午
     private var entryDate: Date {
         let now = Date.now
@@ -43,7 +39,11 @@ struct FoodLogView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        // 打开右上角菜单或 sheet 只应改变交互状态，不应为每个餐次重新过滤
+        // 一遍完整历史。当前选中日的记录在本次 render 内只生成一次。
+        let foodsForDay = dayFoods
+        let totalForDay = foodsForDay.reduce(0) { $0 + $1.calories }
+        return NavigationStack {
             List {
                 Section {
                     DatePicker(
@@ -55,14 +55,14 @@ struct FoodLogView: View {
                     HStack {
                         Text("当日合计")
                         Spacer()
-                        Text(interfaceCalorieText(dayTotal.kcalText, locale: locale))
+                        Text(interfaceCalorieText(totalForDay.kcalText, locale: locale))
                             .bold()
                             .foregroundStyle(Color.accentColor)
                     }
                 }
 
                 ForEach(MealType.allCases) { meal in
-                    let foods = dayFoods.filter { $0.mealType == meal }
+                    let foods = foodsForDay.filter { $0.mealType == meal }
                     if !foods.isEmpty {
                         Section {
                             ForEach(foods) { food in
@@ -112,7 +112,7 @@ struct FoodLogView: View {
                     }
                 }
 
-                if dayFoods.isEmpty {
+                if foodsForDay.isEmpty {
                     Section {
                         ContentUnavailableView(
                             "还没有记录",

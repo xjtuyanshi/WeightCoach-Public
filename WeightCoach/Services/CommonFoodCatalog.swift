@@ -514,20 +514,32 @@ enum CommonFoodCatalog {
         foods.first { $0.id == id }
     }
 
-    /// 旧记录只保存了本地化后的名称；切换 App 语言后仍尽量恢复同一个参考库身份，
-    /// 让「常吃」不会因为简繁英显示名不同而拆成三组。
-    static func referenceID(forStoredName storedName: String) -> String? {
+    private static let referenceIDByStoredName: [String: String] = {
         let locales = [
             Locale(identifier: "zh-Hans"),
             Locale(identifier: "zh-Hant-TW"),
             Locale(identifier: "en-US"),
         ]
-        return foods.first { food in
-            locales.contains { locale in
-                food.localizedDisplayName(locale: locale) == storedName
-                    || food.localizedName(locale: locale) == storedName
+        var result: [String: String] = [:]
+        for food in foods {
+            for locale in locales {
+                let names = [
+                    food.localizedDisplayName(locale: locale),
+                    food.localizedName(locale: locale),
+                ]
+                for name in names where result[name] == nil {
+                    // 保持旧实现 `foods.first` 的冲突优先级。
+                    result[name] = food.id
+                }
             }
-        }?.id
+        }
+        return result
+    }()
+
+    /// 旧记录只保存了本地化后的名称；切换 App 语言后仍尽量恢复同一个参考库身份，
+    /// 让「常吃」不会因为简繁英显示名不同而拆成三组。
+    static func referenceID(forStoredName storedName: String) -> String? {
+        referenceIDByStoredName[storedName]
     }
 
     static func search(_ query: String) -> [CommonFoodReference] {

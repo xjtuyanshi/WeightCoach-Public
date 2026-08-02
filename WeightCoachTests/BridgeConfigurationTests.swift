@@ -119,4 +119,25 @@ final class BridgeConfigurationTests: XCTestCase {
             )
         )
     }
+
+    func testSavingAddressReenablesBridgeAfterExplicitClear() throws {
+        let suiteName = "BridgeConfigurationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        BridgeConfiguration.clear(defaults: defaults)
+        XCTAssertTrue(defaults.bool(forKey: BridgeConfiguration.userDefaultsDisabledKey))
+
+        let savedURL = try BridgeConfiguration.save(
+            "https://bridge.example.com",
+            defaults: defaults
+        )
+
+        XCTAssertEqual(savedURL.absoluteString, "https://bridge.example.com")
+        XCTAssertEqual(
+            defaults.string(forKey: BridgeConfiguration.userDefaultsURLKey),
+            "https://bridge.example.com"
+        )
+        XCTAssertFalse(defaults.bool(forKey: BridgeConfiguration.userDefaultsDisabledKey))
+    }
 }

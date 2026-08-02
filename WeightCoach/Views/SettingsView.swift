@@ -237,6 +237,9 @@ struct SettingsView: View {
                             clearBridgeConfiguration()
                         }
                     }
+                    // Form/List 会把同一行的 automatic Button 都提升为整行操作，
+                    // 导致点击“保存”时同时执行“清除”。borderless 保持两个操作独立。
+                    .buttonStyle(.borderless)
 
                     if let bridgeConfigurationMessage {
                         Text(interfaceLocalized(

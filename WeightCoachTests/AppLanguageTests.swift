@@ -198,6 +198,30 @@ final class AppLanguageTests: XCTestCase {
                 "Allow Cloud Analysis of This Photo?"
             ),
             (
+                "一句话补记",
+                "一句话补记",
+                "一句話補記",
+                "Describe & Log"
+            ),
+            (
+                "允许云端分析这段饮食描述？",
+                "允许云端分析这段饮食描述？",
+                "允許雲端分析這段飲食描述？",
+                "Allow Cloud Analysis of This Description?"
+            ),
+            (
+                "已核对日期和餐次",
+                "已核对日期和餐次",
+                "已核對日期和餐次",
+                "I reviewed the date and meal"
+            ),
+            (
+                "单项热量需在 1–5000 千卡之间",
+                "单项热量需在 1–5000 千卡之间",
+                "每項熱量須介於 1–5000 大卡之間",
+                "Each item must be between 1 and 5,000 kcal"
+            ),
+            (
                 "体脂率需大于 3% 且小于 70%，或留空。",
                 "体脂率需大于 3% 且小于 70%，或留空。",
                 "體脂率必須大於 3% 且小於 70%，或留白。",

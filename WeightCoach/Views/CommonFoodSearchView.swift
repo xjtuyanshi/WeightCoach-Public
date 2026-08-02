@@ -300,6 +300,7 @@ struct CommonFoodSearchView: View {
 
     @ViewBuilder
     private var searchResultSections: some View {
+        let results = searchResults
         if shouldShowStarbucksCalculator {
             Section("品牌饮品核对") {
                 Button {
@@ -335,14 +336,14 @@ struct CommonFoodSearchView: View {
                 ? interfaceLocalized("常见食物", locale: locale)
                 : suggestionSectionTitle
         ) {
-            if searchResults.isEmpty {
+            if results.isEmpty {
                 ContentUnavailableView(
                     "没有匹配的常见食物",
                     systemImage: "magnifyingglass",
                     description: Text("仍然可以保留这个名称，自行填写热量与营养。")
                 )
             } else {
-                ForEach(searchResults) { food in
+                ForEach(results) { food in
                     Button {
                         searchFocused = false
                         gramsFocused = false

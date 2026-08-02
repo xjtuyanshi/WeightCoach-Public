@@ -317,18 +317,30 @@ enum FoodEntryWriter {
                 }
             }
             try? context.save()
+            for sampleUUID in sampleUUIDs
+            where pendingHealthWrites[sampleUUID]?.token == token {
+                pendingHealthWrites.removeValue(forKey: sampleUUID)
+            }
         }
         let pendingWrite = PendingHealthWrite(token: token, task: writeTask)
         for sampleUUID in sampleUUIDs {
             pendingHealthWrites[sampleUUID] = pendingWrite
         }
 
-        await writeTask.value
-        for sampleUUID in sampleUUIDs
-        where pendingHealthWrites[sampleUUID]?.token == token {
-            pendingHealthWrites.removeValue(forKey: sampleUUID)
-        }
+        // 用户可在本地事务成功后立即继续操作。HealthKit 写入留在后台；若用户
+        // 随即删除/撤销，delete 会通过 pendingHealthWrites 等待同一批写入结束，
+        // 因而不会牺牲“远端先删、本地后删”的一致性。
         return entries
+    }
+
+    /// 等待这些记录仍在进行的 HealthKit 写入。产品删除路径会自动调用；此入口
+    /// 也让并发测试可以确定性地观察最终同步状态，而不让普通保存 UI 等待远端。
+    static func waitForPendingHealthWrites(for entries: [FoodEntry]) async {
+        var visited: Set<UUID> = []
+        for sampleUUID in entries.compactMap(\.healthKitSampleUUID)
+        where visited.insert(sampleUUID).inserted {
+            await waitForPendingHealthWrite(sampleUUID: sampleUUID)
+        }
     }
 
     /// 对失败或结果不确定的单条饮食做幂等重试。

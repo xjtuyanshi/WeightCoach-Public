@@ -44,6 +44,7 @@ fi
     "$SOURCE_DIR/server.py" \
     "$SOURCE_DIR/response-schema.json" \
     "$SOURCE_DIR/recognition-prompt.txt" \
+    "$SOURCE_DIR/text-recognition-prompt.txt" \
     "$APP_DIR/"
 
 ESCAPED_APP_DIR="${APP_DIR//\//\\/}"

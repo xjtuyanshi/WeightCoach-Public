@@ -8,11 +8,13 @@ struct DashboardView: View {
     @Environment(HealthKitManager.self) private var health
     @Environment(\.modelContext) private var modelContext
     @Environment(\.locale) private var locale
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \FoodEntry.date, order: .reverse) private var allFoods: [FoodEntry]
     @Query(sort: \WeightEntry.date, order: .reverse) private var localWeights: [WeightEntry]
     @Query(sort: \ExerciseEntry.startDate, order: .reverse) private var allExercises: [ExerciseEntry]
 
     @State private var showAIScan = false
+    @State private var showSentenceBackfill = false
     @State private var showBarcodeScan = false
     @State private var showCommonFoodSearch = false
     @State private var repeatingFoodKey: String?
@@ -31,37 +33,7 @@ struct DashboardView: View {
         allFoods.filter { Calendar.current.isDateInToday($0.date) }
     }
 
-    private var todayMetrics: TodayBudgetMetrics {
-        TodayBudgetMetrics.calculate(
-            profile: profile,
-            health: health,
-            todayFoods: todayFoods,
-            localWeights: localWeights,
-            exercises: allExercises
-        )
-    }
-
-    private var currentWeight: Double { todayMetrics.currentWeight }
-    private var bmr: Double { todayMetrics.bmr }
-    private var tdee: Double { todayMetrics.tdee }
-    private var deficit: Double { todayMetrics.deficit }
-    private var budget: Double { todayMetrics.budget }
-    private var consumed: Double { todayMetrics.consumed }
-    private var nutritionMetrics: TodayNutritionMetrics {
-        TodayNutritionMetrics.calculate(foods: todayFoods)
-    }
-    private var caffeineMetrics: TodayCaffeineMetrics {
-        TodayCaffeineMetrics.calculate(foods: todayFoods)
-    }
-    private var macroTargets: DailyMacroTargets? {
-        MacroTargetEngine.calculate(
-            currentWeightKg: currentWeight,
-            budgetKcal: budget,
-            dayStyle: profile.macroDayStyle()
-        )
-    }
-
-    private var goalProgress: Double {
+    private func goalProgress(currentWeight: Double) -> Double {
         let total = profile.goalStartWeight - profile.goalWeight
         guard total > 0 else { return 1 }
         return min(max((profile.goalStartWeight - currentWeight) / total, 0), 1)
@@ -70,9 +42,16 @@ struct DashboardView: View {
     private var weeklyTrendRefreshKey: String {
         let calibration =
             profile.bodyComposition.calibratedBodyFatPercent
+        let todayStart = Calendar.current.startOfDay(for: .now)
+        let historicalFoodCount = allFoods.reduce(into: 0) { count, food in
+            if food.date < todayStart { count += 1 }
+        }
+        let latestHistoricalFoodDate = allFoods.first {
+            $0.date < todayStart
+        }?.date
         let components: [String] = [
-            String(allFoods.count),
-            allFoods.first?.date.timeIntervalSinceReferenceDate.description ?? "-",
+            String(historicalFoodCount),
+            latestHistoricalFoodDate?.timeIntervalSinceReferenceDate.description ?? "-",
             String(allExercises.count),
             allExercises.first?.startDate.timeIntervalSinceReferenceDate.description ?? "-",
             String(localWeights.count),
@@ -100,46 +79,58 @@ struct DashboardView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        // 一次 render 只合成一次今日数据。此前每个卡片 getter 都会重新扫描
+        // SwiftData 查询结果，点加号这类纯 UI 状态变化也会重复十余次。
+        let foods = todayFoods
+        let metrics = TodayBudgetMetrics.calculate(
+            profile: profile,
+            health: health,
+            todayFoods: foods,
+            localWeights: localWeights,
+            exercises: allExercises
+        )
+        let nutrition = TodayNutritionMetrics.calculate(foods: foods)
+        let caffeine = TodayCaffeineMetrics.calculate(foods: foods)
+        let targets = MacroTargetEngine.calculate(
+            currentWeightKg: metrics.currentWeight,
+            budgetKcal: metrics.budget,
+            dayStyle: profile.macroDayStyle()
+        )
+
+        return NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    if DemoMode.demoRepeatFoodsEnabled {
-                        quickLoggingSections
-                    }
+                    quickLoggingCard
 
-                    if let macroTargets {
+                    if let targets {
                         MacroSummaryView(
-                            metrics: nutritionMetrics,
-                            targets: macroTargets,
-                            consumedKcal: consumed,
+                            metrics: nutrition,
+                            targets: targets,
+                            consumedKcal: metrics.consumed,
                             allowsTrainingAdjustment: profile.trainingFuelAdjustmentEnabled
                         ) { style in
                             profile.setMacroDayStyle(style)
                         }
                     }
 
-                    CaffeineSummaryCard(metrics: caffeineMetrics)
+                    weeklyTrendCard
 
                     EnergyExpenditureCard(
-                        bmrKcal: bmr,
-                        healthActiveEnergyKcal: todayMetrics.healthActiveEnergy,
-                        manualExerciseEstimatedKcal: todayMetrics.manualExerciseEstimatedEnergy,
-                        manualExerciseHealthOverlapKcal: todayMetrics.manualExerciseHealthOverlap,
-                        manualExerciseSupplementKcal: todayMetrics.manualExerciseSupplementalEnergy,
-                        tdeeKcal: tdee,
-                        deficitKcal: deficit,
-                        budgetKcal: budget,
+                        bmrKcal: metrics.bmr,
+                        healthActiveEnergyKcal: metrics.healthActiveEnergy,
+                        manualExerciseEstimatedKcal: metrics.manualExerciseEstimatedEnergy,
+                        manualExerciseHealthOverlapKcal: metrics.manualExerciseHealthOverlap,
+                        manualExerciseSupplementKcal: metrics.manualExerciseSupplementalEnergy,
+                        tdeeKcal: metrics.tdee,
+                        deficitKcal: metrics.deficit,
+                        budgetKcal: metrics.budget,
                         activityFactor: profile.activityFactor,
                         includeActiveEnergy: profile.includeActiveEnergy
                     )
 
-                    weeklyTrendCard
+                    CaffeineSummaryCard(metrics: caffeine)
 
-                    if !DemoMode.demoRepeatFoodsEnabled {
-                        quickLoggingSections
-                    }
-
-                    goalCard
+                    goalCard(metrics: metrics)
 
                     if (!health.isAvailable || health.latestWeightKg == nil) && !DemoMode.isActive {
                         healthHintCard
@@ -149,6 +140,7 @@ struct DashboardView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("今日")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -169,12 +161,18 @@ struct DashboardView: View {
                 if DemoMode.demoTrendsEnabled {
                     showTrends = true
                 }
+                if DemoMode.demoSentenceBackfillEnabled {
+                    showSentenceBackfill = true
+                }
             }
             .task(id: weeklyTrendRefreshKey) {
                 await reloadWeeklyTrends()
             }
             .navigationDestination(isPresented: $showTrends) {
                 NutritionTrendsView()
+            }
+            .sheet(isPresented: $showSentenceBackfill) {
+                SentenceFoodBackfillView(defaultDate: .now)
             }
             .sheet(isPresented: $showAIScan) { AIFoodScanView(defaultDate: .now) }
             .sheet(isPresented: $showBarcodeScan) { BarcodeScanView(defaultDate: .now) }
@@ -215,21 +213,93 @@ struct DashboardView: View {
         )
     }
 
+    private var quickLoggingCard: some View {
+        // SwiftUI 会在一次状态更新中多次求值子视图。先生成一次卡片快照，避免
+        // 每个 ForEach 下标都重新扫描全部历史记录。
+        let cards = repeatFoodCards
+        return VStack(alignment: .leading, spacing: 12) {
+            Label("快速记录", systemImage: "bolt.fill")
+                .font(.headline)
+
+            Button {
+                showSentenceBackfill = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "text.bubble.fill")
+                        .font(.title3)
+                        .frame(width: 28)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(interfaceLocalized("一句话补记", locale: locale))
+                            .font(.subheadline.bold())
+                        Text(interfaceLocalized("例如：1 根烤肠、2 个鸡翅", locale: locale))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+                .background(Color.accentColor.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
+
+            quickAddButtons
+
+            if !cards.isEmpty {
+                Divider()
+                repeatFoodSuggestionsSection(cards)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
     private var quickAddButtons: some View {
-        HStack(spacing: 12) {
-            quickButton("拍照识别", icon: "camera.viewfinder") { showAIScan = true }
-            quickButton("扫条形码", icon: "barcode.viewfinder") { showBarcodeScan = true }
-            quickButton("自行填写", icon: "magnifyingglass") {
-                showCommonFoodSearch = true
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 10) {
+                    photoQuickButton
+                    barcodeQuickButton
+                    manualQuickButton
+                }
+            } else if AppLanguage.system.resolvedLanguage(systemLocale: locale) == .english {
+                VStack(spacing: 10) {
+                    HStack(spacing: 12) {
+                        photoQuickButton
+                        barcodeQuickButton
+                    }
+                    manualQuickButton
+                }
+            } else {
+                HStack(spacing: 12) {
+                    photoQuickButton
+                    barcodeQuickButton
+                    manualQuickButton
+                }
             }
         }
     }
 
-    @ViewBuilder
-    private var quickLoggingSections: some View {
-        quickAddButtons
-        if !repeatFoodCards.isEmpty {
-            repeatFoodSuggestionsSection
+    private var photoQuickButton: some View {
+        quickButton("拍照识别", icon: "camera.viewfinder") { showAIScan = true }
+    }
+
+    private var barcodeQuickButton: some View {
+        quickButton("扫条形码", icon: "barcode.viewfinder") { showBarcodeScan = true }
+    }
+
+    private var manualQuickButton: some View {
+        quickButton("自行填写", icon: "magnifyingglass") {
+            showCommonFoodSearch = true
         }
     }
 
@@ -347,11 +417,36 @@ struct DashboardView: View {
     }
 
     private var repeatFoodCards: [RepeatFoodCard] {
-        let snapshots = allFoods.enumerated().map { index, food in
-            FoodRepeatSuggestionSnapshot(
-                sourceIndex: index,
-                key: repeatKey(for: food),
-                date: food.date
+        let calendar = Calendar.current
+        let referenceDay = calendar.startOfDay(for: .now)
+        guard
+            let earliestDay = calendar.date(
+                byAdding: .day,
+                value: -29,
+                to: referenceDay
+            ),
+            let tomorrow = calendar.date(
+                byAdding: .day,
+                value: 1,
+                to: referenceDay
+            )
+        else {
+            return []
+        }
+
+        // @Query 已按日期倒序。常吃规则只看近 30 天，因此遇到更早记录即可停止，
+        // 避免长期使用后每次点按钮都给整库记录做名称本地化与身份归并。
+        var snapshots: [FoodRepeatSuggestionSnapshot] = []
+        snapshots.reserveCapacity(min(allFoods.count, 64))
+        for (index, food) in allFoods.enumerated() {
+            if food.date >= tomorrow { continue }
+            if food.date < earliestDay { break }
+            snapshots.append(
+                FoodRepeatSuggestionSnapshot(
+                    sourceIndex: index,
+                    key: repeatKey(for: food),
+                    date: food.date
+                )
             )
         }
         let suggestions = FoodRepeatSuggestionEngine.makeSuggestions(
@@ -368,21 +463,31 @@ struct DashboardView: View {
         }
     }
 
-    private var repeatFoodSuggestionsSection: some View {
+    private func repeatFoodSuggestionsSection(
+        _ cards: [RepeatFoodCard]
+    ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            if dynamicTypeSize.isAccessibilitySize {
                 Label("常吃与最近 · 点一下直接记", systemImage: "clock.arrow.circlepath")
                     .font(.subheadline.bold())
-                Spacer()
                 Text("按上次份量")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else {
+                HStack {
+                    Label("常吃与最近 · 点一下直接记", systemImage: "clock.arrow.circlepath")
+                        .font(.subheadline.bold())
+                    Spacer()
+                    Text("按上次份量")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(repeatFoodCards.indices, id: \.self) { index in
-                        repeatFoodButton(repeatFoodCards[index])
+                    ForEach(cards) { card in
+                        repeatFoodButton(card)
                     }
                 }
             }
@@ -423,14 +528,14 @@ struct DashboardView: View {
                 Text(food.name)
                     .font(.subheadline.bold())
                     .foregroundStyle(.primary)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                 Text(
                     food.portionText
                         ?? interfaceLocalized("按上次记录", locale: locale)
                 )
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                 Text(
                     interfaceCalorieText(
                         food.calories.kcalText,
@@ -447,11 +552,17 @@ struct DashboardView: View {
                     )
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                 }
             }
-            .frame(width: 150, alignment: .topLeading)
-            .frame(minHeight: 105, alignment: .topLeading)
+            .frame(
+                width: dynamicTypeSize.isAccessibilitySize ? 240 : 150,
+                alignment: .topLeading
+            )
+            .frame(
+                minHeight: dynamicTypeSize.isAccessibilitySize ? 180 : 105,
+                alignment: .topLeading
+            )
             .padding(12)
             .background(
                 card.suggestion.isFrequent
@@ -571,21 +682,25 @@ struct DashboardView: View {
 
     private func quickButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 6) {
-                Image(systemName: icon).font(.title2)
-                Text(interfaceLocalized(title, locale: locale)).font(.caption)
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                Text(interfaceLocalized(title, locale: locale))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
             }
+            .font(.subheadline.bold())
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(Color.accentColor.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .frame(minHeight: 44)
+            .background(Color.accentColor.opacity(0.10))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
         .foregroundStyle(Color.accentColor)
     }
 
-    private var goalCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func goalCard(metrics: TodayBudgetMetrics) -> some View {
+        let currentWeight = metrics.currentWeight
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("减重目标", systemImage: "flag.checkered")
                     .font(.subheadline.bold())
@@ -594,7 +709,7 @@ struct DashboardView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            ProgressView(value: goalProgress)
+            ProgressView(value: goalProgress(currentWeight: currentWeight))
                 .tint(.accentColor)
             HStack {
                 Text("\(profile.goalStartWeight.kgText) kg")
@@ -611,7 +726,7 @@ struct DashboardView: View {
             let lost = profile.goalStartWeight - currentWeight
             let toGo = currentWeight - profile.goalWeight
             // 实际缺口：预算触及安全底线时会小于目标缺口
-            let effectiveDeficit = max(0, tdee - budget)
+            let effectiveDeficit = max(0, metrics.tdee - metrics.budget)
             Text(goalProgressText(lost: lost, toGo: toGo, effectiveDeficit: effectiveDeficit))
                 .font(.caption)
                 .foregroundStyle(.secondary)

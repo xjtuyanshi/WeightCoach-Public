@@ -12,6 +12,7 @@ struct FoodLogView: View {
     @State private var selectedDate = Date()
     @State private var showManualAdd = false
     @State private var showAIScan = false
+    @State private var showSentenceBackfill = false
     @State private var showBarcodeScan = false
     @State private var isRepeatingFood = false
     @State private var undoEntry: FoodEntry?
@@ -24,32 +25,44 @@ struct FoodLogView: View {
         allFoods.filter { Calendar.current.isDate($0.date, inSameDayAs: selectedDate) }
     }
 
-    private var dayTotal: Double {
-        dayFoods.reduce(0) { $0 + $1.calories }
-    }
-
     /// 记录用的时间：选中今天用当前时刻，选中过去的日期用当天中午
     private var entryDate: Date {
-        if Calendar.current.isDateInToday(selectedDate) { return .now }
-        return Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: selectedDate) ?? selectedDate
+        let now = Date.now
+        let boundedDate = min(selectedDate, now)
+        if Calendar.current.isDateInToday(boundedDate) { return now }
+        return Calendar.current.date(
+            bySettingHour: 12,
+            minute: 0,
+            second: 0,
+            of: boundedDate
+        ) ?? boundedDate
     }
 
     var body: some View {
-        NavigationStack {
+        // 打开右上角菜单或 sheet 只应改变交互状态，不应为每个餐次重新过滤
+        // 一遍完整历史。当前选中日的记录在本次 render 内只生成一次。
+        let foodsForDay = dayFoods
+        let totalForDay = foodsForDay.reduce(0) { $0 + $1.calories }
+        return NavigationStack {
             List {
                 Section {
-                    DatePicker("日期", selection: $selectedDate, displayedComponents: .date)
+                    DatePicker(
+                        "日期",
+                        selection: $selectedDate,
+                        in: ...Date.now,
+                        displayedComponents: .date
+                    )
                     HStack {
                         Text("当日合计")
                         Spacer()
-                        Text(interfaceCalorieText(dayTotal.kcalText, locale: locale))
+                        Text(interfaceCalorieText(totalForDay.kcalText, locale: locale))
                             .bold()
                             .foregroundStyle(Color.accentColor)
                     }
                 }
 
                 ForEach(MealType.allCases) { meal in
-                    let foods = dayFoods.filter { $0.mealType == meal }
+                    let foods = foodsForDay.filter { $0.mealType == meal }
                     if !foods.isEmpty {
                         Section {
                             ForEach(foods) { food in
@@ -99,47 +112,58 @@ struct FoodLogView: View {
                     }
                 }
 
-                if dayFoods.isEmpty {
+                if foodsForDay.isEmpty {
                     Section {
                         ContentUnavailableView(
                             "还没有记录",
                             systemImage: "fork.knife.circle",
-                            description: Text("用下方按钮记录你吃的东西")
+                            description: Text("点右上角记录你吃的东西")
                         )
                     }
                 }
             }
             .navigationTitle("饮食记录")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .bottomBar) {
-                    Button {
-                        showAIScan = true
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            showAIScan = true
+                        } label: {
+                            Label("拍照识别", systemImage: "camera.viewfinder")
+                        }
+                        Button {
+                            showSentenceBackfill = true
+                        } label: {
+                            Label("一句话补记", systemImage: "text.bubble.fill")
+                        }
+                        Button {
+                            showBarcodeScan = true
+                        } label: {
+                            Label("扫码", systemImage: "barcode.viewfinder")
+                        }
+                        Button {
+                            showManualAdd = true
+                        } label: {
+                            Label("手动", systemImage: "square.and.pencil")
+                        }
                     } label: {
-                        Label("拍照识别", systemImage: "camera.viewfinder")
-                    }
-                    Spacer()
-                    Button {
-                        showBarcodeScan = true
-                    } label: {
-                        Label("扫码", systemImage: "barcode.viewfinder")
-                    }
-                    Spacer()
-                    Button {
-                        showManualAdd = true
-                    } label: {
-                        Label("手动", systemImage: "square.and.pencil")
+                        Label("记录", systemImage: "plus.circle.fill")
                     }
                 }
             }
             .sheet(isPresented: $showManualAdd) {
                 CommonFoodSearchView(defaultDate: entryDate)
             }
+            .sheet(isPresented: $showSentenceBackfill) {
+                SentenceFoodBackfillView(defaultDate: entryDate)
+            }
             .sheet(isPresented: $showAIScan) { AIFoodScanView(defaultDate: entryDate) }
             .sheet(isPresented: $showBarcodeScan) { BarcodeScanView(defaultDate: entryDate) }
-            .overlay(alignment: .bottom) {
+            .safeAreaInset(edge: .bottom) {
                 if let repeatMessage {
                     repeatToast(repeatMessage)
-                        .padding(.bottom, 54)
+                        .padding(.bottom, 6)
                 }
             }
             .alert(

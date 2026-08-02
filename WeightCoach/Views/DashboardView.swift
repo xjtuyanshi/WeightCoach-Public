@@ -103,9 +103,7 @@ struct DashboardView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    if DemoMode.demoRepeatFoodsEnabled {
-                        quickLoggingSections
-                    }
+                    quickLoggingCard
 
                     if let macroTargets {
                         MacroSummaryView(
@@ -118,7 +116,7 @@ struct DashboardView: View {
                         }
                     }
 
-                    CaffeineSummaryCard(metrics: caffeineMetrics)
+                    weeklyTrendCard
 
                     EnergyExpenditureCard(
                         bmrKcal: bmr,
@@ -133,11 +131,7 @@ struct DashboardView: View {
                         includeActiveEnergy: profile.includeActiveEnergy
                     )
 
-                    weeklyTrendCard
-
-                    if !DemoMode.demoRepeatFoodsEnabled {
-                        quickLoggingSections
-                    }
+                    CaffeineSummaryCard(metrics: caffeineMetrics)
 
                     goalCard
 
@@ -149,6 +143,7 @@ struct DashboardView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("今日")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -215,6 +210,24 @@ struct DashboardView: View {
         )
     }
 
+    private var quickLoggingCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("快速记录", systemImage: "bolt.fill")
+                .font(.headline)
+
+            quickAddButtons
+
+            if !repeatFoodCards.isEmpty {
+                Divider()
+                repeatFoodSuggestionsSection
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
     private var quickAddButtons: some View {
         HStack(spacing: 12) {
             quickButton("拍照识别", icon: "camera.viewfinder") { showAIScan = true }
@@ -222,14 +235,6 @@ struct DashboardView: View {
             quickButton("自行填写", icon: "magnifyingglass") {
                 showCommonFoodSearch = true
             }
-        }
-    }
-
-    @ViewBuilder
-    private var quickLoggingSections: some View {
-        quickAddButtons
-        if !repeatFoodCards.isEmpty {
-            repeatFoodSuggestionsSection
         }
     }
 
@@ -571,14 +576,17 @@ struct DashboardView: View {
 
     private func quickButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 6) {
-                Image(systemName: icon).font(.title2)
-                Text(interfaceLocalized(title, locale: locale)).font(.caption)
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                Text(interfaceLocalized(title, locale: locale))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
+            .font(.subheadline.bold())
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(Color.accentColor.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .frame(minHeight: 44)
+            .background(Color.accentColor.opacity(0.10))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
         .foregroundStyle(Color.accentColor)

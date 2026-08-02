@@ -104,30 +104,33 @@ struct FoodLogView: View {
                         ContentUnavailableView(
                             "还没有记录",
                             systemImage: "fork.knife.circle",
-                            description: Text("用下方按钮记录你吃的东西")
+                            description: Text("点右上角记录你吃的东西")
                         )
                     }
                 }
             }
             .navigationTitle("饮食记录")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .bottomBar) {
-                    Button {
-                        showAIScan = true
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            showAIScan = true
+                        } label: {
+                            Label("拍照识别", systemImage: "camera.viewfinder")
+                        }
+                        Button {
+                            showBarcodeScan = true
+                        } label: {
+                            Label("扫码", systemImage: "barcode.viewfinder")
+                        }
+                        Button {
+                            showManualAdd = true
+                        } label: {
+                            Label("手动", systemImage: "square.and.pencil")
+                        }
                     } label: {
-                        Label("拍照识别", systemImage: "camera.viewfinder")
-                    }
-                    Spacer()
-                    Button {
-                        showBarcodeScan = true
-                    } label: {
-                        Label("扫码", systemImage: "barcode.viewfinder")
-                    }
-                    Spacer()
-                    Button {
-                        showManualAdd = true
-                    } label: {
-                        Label("手动", systemImage: "square.and.pencil")
+                        Label("记录", systemImage: "plus.circle.fill")
                     }
                 }
             }
@@ -136,10 +139,10 @@ struct FoodLogView: View {
             }
             .sheet(isPresented: $showAIScan) { AIFoodScanView(defaultDate: entryDate) }
             .sheet(isPresented: $showBarcodeScan) { BarcodeScanView(defaultDate: entryDate) }
-            .overlay(alignment: .bottom) {
+            .safeAreaInset(edge: .bottom) {
                 if let repeatMessage {
                     repeatToast(repeatMessage)
-                        .padding(.bottom, 54)
+                        .padding(.bottom, 6)
                 }
             }
             .alert(

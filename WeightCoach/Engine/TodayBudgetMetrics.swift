@@ -15,6 +15,9 @@ struct TodayBudgetMetrics {
     let healthActiveEnergy: Double
     let manualExerciseEstimatedEnergy: Double
     let manualExerciseHealthOverlap: Double
+    let manualExerciseHealthWorkoutCoveredMinutes: Double
+    let manualExerciseUsedHealthWorkoutCoverage: Bool
+    let manualExerciseCoverageAvailable: Bool
     let manualExerciseSupplementalEnergy: Double
     let effectiveActiveEnergy: Double
 
@@ -64,11 +67,23 @@ struct TodayBudgetMetrics {
         let dayStart = calendar.startOfDay(for: referenceDate)
         let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)
             ?? dayStart.addingTimeInterval(86_400)
-        let exerciseSummary = ManualExerciseSupplementEngine.calculateTotal(
+        let calculatedExerciseSummary = ManualExerciseSupplementEngine.calculateTotal(
             exercises: exercises.map(\.energyInterval),
             healthSamples: health.todayActiveEnergyIntervals.map(HealthActiveEnergySample.init),
+            healthWorkouts: health.todayWorkoutIntervals,
             within: DateInterval(start: dayStart, end: dayEnd)
         )
+        let manualCoverageAvailable = !profile.includeActiveEnergy
+            || exercises.isEmpty
+            || health.todayWorkoutCoverageAvailable
+        let exerciseSummary = manualCoverageAvailable
+            ? calculatedExerciseSummary
+            : ManualExerciseSupplement(
+                estimatedActiveEnergyKcal:
+                    calculatedExerciseSummary.estimatedActiveEnergyKcal,
+                overlappingHealthEnergyKcal: 0,
+                supplementalActiveEnergyKcal: 0
+            )
         let healthActiveEnergy = health.todayActiveEnergyKcal.isFinite
             ? max(0, health.todayActiveEnergyKcal)
             : 0
@@ -82,10 +97,12 @@ struct TodayBudgetMetrics {
             activeEnergyKcal: effectiveActiveEnergy,
             includeActiveEnergy: profile.includeActiveEnergy
         )
-        let deficit = CalorieEngine.dailyDeficit(
+        let deficit = CalorieEngine.targetDeficit(
+            strategy: profile.deficitStrategy,
             currentWeightKg: currentWeight,
             goalWeightKg: profile.goalWeight,
-            goalEndDate: profile.goalEndDate
+            goalEndDate: profile.goalEndDate,
+            now: referenceDate
         )
         let budget = CalorieEngine.dailyBudget(tdee: tdee, deficit: deficit, isMale: isMale)
         let consumed = todayFoods.reduce(0) { $0 + $1.calories }
@@ -102,6 +119,11 @@ struct TodayBudgetMetrics {
             healthActiveEnergy: healthActiveEnergy,
             manualExerciseEstimatedEnergy: exerciseSummary.estimatedActiveEnergyKcal,
             manualExerciseHealthOverlap: exerciseSummary.overlappingHealthEnergyKcal,
+            manualExerciseHealthWorkoutCoveredMinutes:
+                exerciseSummary.healthWorkoutCoveredMinutes,
+            manualExerciseUsedHealthWorkoutCoverage:
+                exerciseSummary.usedHealthWorkoutCoverage,
+            manualExerciseCoverageAvailable: manualCoverageAvailable,
             manualExerciseSupplementalEnergy: exerciseSummary.supplementalActiveEnergyKcal,
             effectiveActiveEnergy: effectiveActiveEnergy
         )

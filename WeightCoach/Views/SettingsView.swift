@@ -122,14 +122,45 @@ struct SettingsView: View {
                             .frame(width: 90)
                         Text("kg").foregroundStyle(.secondary)
                     }
+                    Picker("减脂方式", selection: $profile.deficitStrategy) {
+                        ForEach(DeficitStrategy.allCases) { strategy in
+                            Text(interfaceLocalized(
+                                strategy.label,
+                                locale: language.locale
+                            ))
+                            .tag(strategy)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                    .accessibilityIdentifier("settings.deficit-strategy")
+                    .accessibilityValue(interfaceLocalized(
+                        profile.deficitStrategy.label,
+                        locale: language.locale
+                    ))
+                    .accessibilityHint("选择固定 750 千卡缺口，或按目标日期动态调整。")
                     DatePicker("开始日期", selection: $profile.goalStartDate, displayedComponents: .date)
-                    DatePicker("目标日期", selection: $profile.goalEndDate, displayedComponents: .date)
+                    if profile.deficitStrategy == .rapidFatLoss {
+                        DatePicker(
+                            "参考目标日期",
+                            selection: $profile.goalEndDate,
+                            displayedComponents: .date
+                        )
+                        .accessibilityIdentifier("settings.goal-end-date")
+                    } else {
+                        DatePicker(
+                            "目标日期",
+                            selection: $profile.goalEndDate,
+                            displayedComponents: .date
+                        )
+                        .accessibilityIdentifier("settings.goal-end-date")
+                    }
                 } header: {
                     Text("减重目标")
                 } footer: {
                     let totalKg = max(0, profile.goalStartWeight - profile.goalWeight)
                     let perWeek = profile.totalDays > 0 ? totalKg / Double(profile.totalDays) * 7 : 0
                     Text(goalPlanText(
+                        strategy: profile.deficitStrategy,
                         totalDays: profile.totalDays,
                         totalKg: totalKg,
                         perWeek: perWeek
@@ -237,6 +268,9 @@ struct SettingsView: View {
                             clearBridgeConfiguration()
                         }
                     }
+                    // Form/List 会把同一行的 automatic Button 都提升为整行操作，
+                    // 导致点击“保存”时同时执行“清除”。borderless 保持两个操作独立。
+                    .buttonStyle(.borderless)
 
                     if let bridgeConfigurationMessage {
                         Text(interfaceLocalized(
@@ -302,11 +336,28 @@ struct SettingsView: View {
                     )
                     LabeledContent(
                         "今日活动能量",
-                        value: interfaceCalorieText(
-                            health.todayActiveEnergyKcal.kcalText,
+                        value: health.todayActiveEnergyIntervals.isEmpty
+                            ? interfaceLocalized("未读取到", locale: language.locale)
+                            : interfaceCalorieText(
+                                health.todayActiveEnergyKcal.kcalText,
+                                locale: language.locale
+                            )
+                    )
+                    LabeledContent(
+                        "今日步数",
+                        value: interfaceStepText(
+                            health.todaySteps,
                             locale: language.locale
                         )
                     )
+                    if health.activityDataErrorDescription != nil {
+                        Label(
+                            "Apple 健康活动数据读取失败，请重新请求授权后重试。",
+                            systemImage: "exclamationmark.circle"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    }
                     Button {
                         Task { @MainActor in
                             await health.requestAuthorization()
@@ -374,30 +425,60 @@ struct SettingsView: View {
     }
 
     private func goalPlanText(
+        strategy: DeficitStrategy,
         totalDays: Int,
         totalKg: Double,
         perWeek: Double
     ) -> String {
+        if strategy == .rapidFatLoss {
+            let targetDeficit = Int(CalorieEngine.rapidFatLossDailyDeficit)
+            let weeklyKg = CalorieEngine.rapidFatLossDailyDeficit
+                * 7
+                / CalorieEngine.kcalPerKg
+            switch AppLanguage.system.resolvedLanguage(
+                systemLocale: language.locale
+            ) {
+            case .english:
+                return String(
+                    format: "Fast loss keeps a %d kcal daily target deficit even when you are ahead of schedule—about %.2f kg per week in the simple planning model. The calorie floor still applies; the goal date is for progress reference only.",
+                    targetDeficit,
+                    weeklyKg
+                )
+            case .traditionalChinese:
+                return String(
+                    format: "盡快減脂會固定每天 %d 大卡的目標缺口，不會因進度領先而降低；依簡單模型約每週 %.2f kg。今日熱量目標仍受最低攝取量下限約束，目標日期僅供進度參考。",
+                    targetDeficit,
+                    weeklyKg
+                )
+            case .simplifiedChinese, .system:
+                return String(
+                    format: "尽快减脂会固定每天 %d 千卡的目标缺口，不会因进度领先而降低；按简单模型约每周 %.2f kg。今日热量目标仍受最低摄入量下限约束，目标日期仅供进度参考。",
+                    targetDeficit,
+                    weeklyKg
+                )
+            }
+        }
+
         switch AppLanguage.system.resolvedLanguage(
             systemLocale: language.locale
         ) {
         case .english:
             return String(
-                format: "Plan: lose %.1f kg in %d days, about %.2f kg per week. A weekly rate of 0.5–1 kg is generally safe and sustainable.",
+                format: "Deadline pacing plans %.1f kg in %d days, about %.2f kg per week. The daily target deficit adjusts between 250 and 1,000 kcal; the calorie floor still applies.",
                 totalKg,
                 totalDays,
                 perWeek
             )
         case .traditionalChinese:
             return String(
-                format: "計畫 %d 天減 %.1f kg，約每週 %.2f kg。每週 0.5～1 kg 是安全且可持續的速度。",
+                format: "按日期達標會規劃 %d 天減 %.1f kg，約每週 %.2f kg；每日目標缺口會在 250～1,000 大卡之間動態調整，且今日熱量目標仍受最低攝取量下限約束。",
                 totalDays,
                 totalKg,
                 perWeek
             )
         case .simplifiedChinese, .system:
             return String(
-                format: "计划 %d 天减 %.1f kg，约每周 %.2f kg。每周 0.5~1 kg 是安全且可持续的速度。",
+                format: "按日期达标会规划 %d 天减 %.1f kg，约每周 %.2f kg；每日目标缺口会在 250～1,000 千卡之间动态调整，且今日热量目标仍受最低摄入量下限约束。",
                 totalDays,
                 totalKg,
                 perWeek

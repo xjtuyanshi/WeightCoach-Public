@@ -42,3 +42,29 @@ enum ExerciseEnergyEngine {
         )
     }
 }
+
+/// 仅决定何时提示用户人工核对，不把步数直接换算成热量。
+enum HealthActivityGuidance {
+    static let meaningfulStepThreshold = 1_000.0
+
+    static func shouldOfferManualWalking(
+        steps: Double,
+        includeActiveEnergy: Bool
+    ) -> Bool {
+        includeActiveEnergy
+            && steps.isFinite
+            && steps >= meaningfulStepThreshold
+    }
+
+    static func shouldSuggestManualWalking(
+        steps: Double,
+        hasActiveEnergySamples: Bool,
+        includeActiveEnergy: Bool
+    ) -> Bool {
+        shouldOfferManualWalking(
+            steps: steps,
+            includeActiveEnergy: includeActiveEnergy
+        )
+            && !hasActiveEnergySamples
+    }
+}

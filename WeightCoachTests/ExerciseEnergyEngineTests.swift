@@ -10,12 +10,43 @@ final class ExerciseEnergyEngineTests: XCTestCase {
             (.runningSlow, .running, 6.5, "12028"),
             (.runningModerate, .running, 8.5, "12030"),
             (.runningFast, .running, 11.0, "12070"),
+            (.walkingSlow, .walking, 2.8, "17152"),
+            (.walkingModerate, .walking, 3.8, "17190"),
+            (.walkingBrisk, .walking, 4.8, "17200"),
+            (.strengthGeneral, .strengthTraining, 3.5, "02054"),
+            (.strengthCompound, .strengthTraining, 5.0, "02052"),
+            (.strengthVigorous, .strengthTraining, 6.0, "02050"),
         ]
 
         for (intensity, activity, met, code) in expected {
             XCTAssertEqual(intensity.activityType, activity)
             XCTAssertEqual(intensity.metValue, met)
             XCTAssertEqual(intensity.compendiumCode, code)
+        }
+    }
+
+    func testEveryActivityHasThreePresetsAndStableDefault() {
+        let expectedDefaults: [ExerciseActivityType: ExerciseIntensity] = [
+            .basketball: .basketballGeneral,
+            .running: .runningModerate,
+            .walking: .walkingModerate,
+            .strengthTraining: .strengthGeneral,
+        ]
+
+        XCTAssertEqual(ExerciseActivityType.walking.rawValue, "walking")
+        XCTAssertEqual(
+            ExerciseActivityType.strengthTraining.rawValue,
+            "strengthTraining"
+        )
+
+        for activity in ExerciseActivityType.allCases {
+            let presets = ExerciseIntensity.presets(for: activity)
+            XCTAssertEqual(presets.count, 3, activity.rawValue)
+            XCTAssertTrue(presets.allSatisfy { $0.activityType == activity })
+            XCTAssertEqual(
+                ExerciseIntensity.defaultIntensity(for: activity),
+                expectedDefaults[activity]
+            )
         }
     }
 
@@ -37,6 +68,62 @@ final class ExerciseEnergyEngineTests: XCTestCase {
 
         XCTAssertEqual(basketball, 420, accuracy: 0.001)
         XCTAssertEqual(running, 630, accuracy: 0.001)
+    }
+
+    func testWalkingAndStrengthUseNetActiveEnergy() throws {
+        let walking = try XCTUnwrap(
+            ExerciseEnergyEngine.estimateActiveEnergyKcal(
+                intensity: .walkingModerate,
+                weightKg: 80,
+                durationMinutes: 60
+            )
+        )
+        let strength = try XCTUnwrap(
+            ExerciseEnergyEngine.estimateActiveEnergyKcal(
+                intensity: .strengthGeneral,
+                weightKg: 80,
+                durationMinutes: 60
+            )
+        )
+
+        XCTAssertEqual(walking, 235.2, accuracy: 0.001)
+        XCTAssertEqual(strength, 210, accuracy: 0.001)
+    }
+
+    func testMissingActiveEnergyGuidanceNeverConvertsStepsSilently() {
+        XCTAssertTrue(
+            HealthActivityGuidance.shouldOfferManualWalking(
+                steps: 9_500,
+                includeActiveEnergy: true
+            )
+        )
+        XCTAssertTrue(
+            HealthActivityGuidance.shouldSuggestManualWalking(
+                steps: 9_500,
+                hasActiveEnergySamples: false,
+                includeActiveEnergy: true
+            )
+        )
+        XCTAssertFalse(
+            HealthActivityGuidance.shouldSuggestManualWalking(
+                steps: 9_500,
+                hasActiveEnergySamples: true,
+                includeActiveEnergy: true
+            )
+        )
+        XCTAssertFalse(
+            HealthActivityGuidance.shouldSuggestManualWalking(
+                steps: 9_500,
+                hasActiveEnergySamples: false,
+                includeActiveEnergy: false
+            )
+        )
+        XCTAssertFalse(
+            HealthActivityGuidance.shouldOfferManualWalking(
+                steps: 999,
+                includeActiveEnergy: true
+            )
+        )
     }
 
     func testOneMETProducesZeroActiveEnergy() throws {
@@ -130,6 +217,22 @@ final class ExerciseEnergyEngineTests: XCTestCase {
         XCTAssertEqual(
             entry.displayName(locale: Locale(identifier: "zh-Hant")),
             "籃球 · 一般強度"
+        )
+
+        let walking = try XCTUnwrap(
+            ExerciseEntry.estimated(
+                durationMinutes: 60,
+                intensity: .walkingModerate,
+                weightKg: 80
+            )
+        )
+        XCTAssertEqual(
+            walking.displayName(locale: Locale(identifier: "en")),
+            "Walking · Moderate Walk"
+        )
+        XCTAssertEqual(
+            walking.displayName(locale: Locale(identifier: "zh-Hant")),
+            "走路 · 一般步行"
         )
     }
 

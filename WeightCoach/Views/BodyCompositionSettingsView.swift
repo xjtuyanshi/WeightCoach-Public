@@ -60,7 +60,7 @@ struct BodyCompositionSettingsView: View {
                         )
                     }
                     .id("body-composition-reference")
-                    Text("这是个人参考，不会替代今日预算，也不会改变 TDEE 替代模型、动态缺口或安全下限。")
+                    Text("这是个人参考，不会替代今日预算，也不会改变 TDEE 替代模型、目标缺口策略或安全下限。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } header: {
@@ -339,7 +339,7 @@ private struct DailyIntakeReferenceEditor: View {
                         .foregroundStyle(.secondary)
                 }
             } footer: {
-                Text("仅用于显示个人参考；不进入 BMR、TDEE、动态缺口或今日预算。")
+                Text("仅用于显示个人参考；不进入 BMR、TDEE、目标缺口策略或今日预算。")
             }
 
             if let validationMessage = draft.validationMessage(locale: locale) {

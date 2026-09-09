@@ -31,6 +31,11 @@ final class ProfileStoreTests: XCTestCase {
         XCTAssertFalse(profile.isMale)
         XCTAssertEqual(profile.goalStartWeight, 80)
         XCTAssertEqual(profile.goalWeight, 75)
+        XCTAssertEqual(profile.deficitStrategy, .deadlinePaced)
+        XCTAssertEqual(
+            defaults.string(forKey: ProfileStore.Keys.deficitStrategy),
+            DeficitStrategy.deadlinePaced.rawValue
+        )
         XCTAssertEqual(profile.totalDays, 90)
         XCTAssertEqual(profile.bodyComposition, .empty)
         XCTAssertFalse(profile.isOnboardingComplete)
@@ -48,6 +53,10 @@ final class ProfileStoreTests: XCTestCase {
         defaults.set(endDate, forKey: ProfileStore.Keys.goalEndDate)
         defaults.set(91.2, forKey: ProfileStore.Keys.goalStartWeight)
         defaults.set(85.5, forKey: ProfileStore.Keys.goalWeight)
+        defaults.set(
+            DeficitStrategy.deadlinePaced.rawValue,
+            forKey: ProfileStore.Keys.deficitStrategy
+        )
         defaults.set(1.55, forKey: ProfileStore.Keys.activityFactor)
         defaults.set(false, forKey: ProfileStore.Keys.includeActiveEnergy)
         defaults.set(true, forKey: ProfileStore.Keys.foodReminderEnabled)
@@ -67,6 +76,7 @@ final class ProfileStoreTests: XCTestCase {
         XCTAssertEqual(profile.goalEndDate, endDate)
         XCTAssertEqual(profile.goalStartWeight, 91.2)
         XCTAssertEqual(profile.goalWeight, 85.5)
+        XCTAssertEqual(profile.deficitStrategy, .deadlinePaced)
         XCTAssertEqual(profile.activityFactor, 1.55)
         XCTAssertFalse(profile.includeActiveEnergy)
         XCTAssertTrue(profile.foodReminderEnabled)
@@ -100,6 +110,27 @@ final class ProfileStoreTests: XCTestCase {
         XCTAssertEqual(second.heightCm, 168)
         XCTAssertEqual(second.goalStartWeight, 72)
         XCTAssertEqual(second.goalWeight, 65)
+    }
+
+    func testDeficitStrategyPersistsAcrossLaunches() {
+        let first = ProfileStore(defaults: defaults)
+        first.deficitStrategy = .rapidFatLoss
+
+        let second = ProfileStore(defaults: defaults)
+
+        XCTAssertEqual(second.deficitStrategy, .rapidFatLoss)
+    }
+
+    func testUnknownDeficitStrategyRepairsToDeadlinePaced() {
+        defaults.set("unsupported", forKey: ProfileStore.Keys.deficitStrategy)
+
+        let profile = ProfileStore(defaults: defaults)
+
+        XCTAssertEqual(profile.deficitStrategy, .deadlinePaced)
+        XCTAssertEqual(
+            defaults.string(forKey: ProfileStore.Keys.deficitStrategy),
+            DeficitStrategy.deadlinePaced.rawValue
+        )
     }
 
     func testExistingBodyCompositionWithoutMarkerIsNotReseededIfDataIsLaterRemoved() throws {

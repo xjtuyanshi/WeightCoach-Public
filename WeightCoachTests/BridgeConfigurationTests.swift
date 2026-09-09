@@ -37,6 +37,20 @@ final class BridgeConfigurationTests: XCTestCase {
         XCTAssertEqual(provider.availability, .available)
     }
 
+    func testAcceptsAndPreservesDedicatedHTTPSPort() throws {
+        let url = try BridgeConfiguration.validatedBaseURL(
+            "https://bridge.example.com:8443"
+        )
+
+        XCTAssertEqual(url.scheme, "https")
+        XCTAssertEqual(url.host, "bridge.example.com")
+        XCTAssertEqual(url.port, 8443)
+        XCTAssertEqual(
+            url.appending(path: "health").absoluteString,
+            "https://bridge.example.com:8443/health"
+        )
+    }
+
     func testRejectsHTTPAndUserInfoURLs() {
         let invalidValues = [
             "http://bridge.example.com",
@@ -118,5 +132,61 @@ final class BridgeConfigurationTests: XCTestCase {
                 bundledValue: "https://bundled.example.com"
             )
         )
+    }
+
+    func testSavingAddressReenablesBridgeAfterExplicitClear() throws {
+        let suiteName = "BridgeConfigurationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        BridgeConfiguration.clear(defaults: defaults)
+        XCTAssertTrue(defaults.bool(forKey: BridgeConfiguration.userDefaultsDisabledKey))
+
+        let savedURL = try BridgeConfiguration.save(
+            "https://bridge.example.com",
+            defaults: defaults
+        )
+
+        XCTAssertEqual(savedURL.absoluteString, "https://bridge.example.com")
+        XCTAssertEqual(
+            defaults.string(forKey: BridgeConfiguration.userDefaultsURLKey),
+            "https://bridge.example.com"
+        )
+        XCTAssertFalse(defaults.bool(forKey: BridgeConfiguration.userDefaultsDisabledKey))
+    }
+
+    func testExplicitLaunchRepairRestoresBundledAddress() throws {
+        let suiteName = "BridgeConfigurationRepairTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        BridgeConfiguration.clear(defaults: defaults)
+        let restoredURL = BridgeConfiguration.restoreBundledConfiguration(
+            bundledValue: "https://bridge.example.com",
+            defaults: defaults
+        )
+
+        XCTAssertEqual(restoredURL?.absoluteString, "https://bridge.example.com")
+        XCTAssertEqual(
+            defaults.string(forKey: BridgeConfiguration.userDefaultsURLKey),
+            "https://bridge.example.com"
+        )
+        XCTAssertFalse(defaults.bool(forKey: BridgeConfiguration.userDefaultsDisabledKey))
+    }
+
+    func testLaunchRepairWithoutBundledAddressFailsClosed() throws {
+        let suiteName = "BridgeConfigurationRepairTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        BridgeConfiguration.clear(defaults: defaults)
+        XCTAssertNil(
+            BridgeConfiguration.restoreBundledConfiguration(
+                bundledValue: nil,
+                defaults: defaults
+            )
+        )
+        XCTAssertNil(defaults.string(forKey: BridgeConfiguration.userDefaultsURLKey))
+        XCTAssertTrue(defaults.bool(forKey: BridgeConfiguration.userDefaultsDisabledKey))
     }
 }

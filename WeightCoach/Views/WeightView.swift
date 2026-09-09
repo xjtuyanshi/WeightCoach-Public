@@ -175,10 +175,15 @@ struct WeightView: View {
                     LineMark(
                         x: .value(interfaceLocalized("日期", locale: locale), profile.goalStartDate),
                         y: .value(interfaceLocalized("体重", locale: locale), profile.goalStartWeight),
-                        series: .value(
-                            interfaceLocalized("系列", locale: locale),
-                            interfaceLocalized("目标轨迹", locale: locale)
-                        )
+                            series: .value(
+                                interfaceLocalized("系列", locale: locale),
+                                interfaceLocalized(
+                                    profile.deficitStrategy == .rapidFatLoss
+                                        ? "参考目标轨迹"
+                                        : "目标轨迹",
+                                    locale: locale
+                                )
+                            )
                     )
                     .foregroundStyle(.gray)
                     .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
@@ -186,10 +191,15 @@ struct WeightView: View {
                     LineMark(
                         x: .value(interfaceLocalized("日期", locale: locale), profile.goalEndDate),
                         y: .value(interfaceLocalized("体重", locale: locale), profile.goalWeight),
-                        series: .value(
-                            interfaceLocalized("系列", locale: locale),
-                            interfaceLocalized("目标轨迹", locale: locale)
-                        )
+                            series: .value(
+                                interfaceLocalized("系列", locale: locale),
+                                interfaceLocalized(
+                                    profile.deficitStrategy == .rapidFatLoss
+                                        ? "参考目标轨迹"
+                                        : "目标轨迹",
+                                    locale: locale
+                                )
+                            )
                     )
                     .foregroundStyle(.gray)
                     .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
@@ -212,7 +222,12 @@ struct WeightView: View {
                 }
                 .chartYScale(domain: yDomain)
                 .frame(height: 220)
-                Text("虚线为按计划的目标轨迹")
+                Text(interfaceLocalized(
+                    profile.deficitStrategy == .rapidFatLoss
+                        ? "虚线为参考目标轨迹；日期不参与尽快减脂预算。"
+                        : "虚线为按计划的目标轨迹",
+                    locale: locale
+                ))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

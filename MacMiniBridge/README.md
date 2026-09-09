@@ -41,8 +41,13 @@ cd "/path/to/WeightCoach"
 ~/Library/Application Support/WeightCoachBridge
 ```
 
-随后创建用户级 LaunchAgent，使桥接在登录后自动运行，并建立 Tailscale 私有 HTTPS
-入口。安装完成时会打印本人的私有地址；把它填入 App 的“设置 → AI 识别”。
+随后创建用户级 LaunchAgent，使桥接在登录后自动运行，并在专用 HTTPS 端口
+`8443` 建立 Tailscale 私有入口。专用端口避免与同一台 Mac 上使用默认 `443`
+端口的其他 Tailscale Serve 服务互相覆盖；如确需改端口，可在安装时设置
+`WEIGHTCOACH_TAILSCALE_HTTPS_PORT`。安装完成时会打印本人的完整私有地址；把它
+原样填入 App 的“设置 → AI 识别”。
+安装器会在写入前检查该端口；若已被其他服务占用会停止，而不会静默覆盖。不要用
+`tailscale serve reset` 管理此桥，因为它会同时删除该节点上的其他 Serve 路由。
 仓库与 fresh install 均不包含作者地址，也不会默认连接其他人的 Mac 或消耗其他人的
 ChatGPT 订阅。开发机若要在构建时本地预置地址，请按
 [`docs/BRIDGE_SETUP.md`](../docs/BRIDGE_SETUP.md) 创建 git ignored 配置。

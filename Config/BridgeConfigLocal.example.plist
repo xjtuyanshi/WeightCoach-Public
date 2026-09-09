@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
 	<key>BridgeBaseURL</key>
-	<string>https://your-private-bridge.example.com</string>
+	<string>https://your-private-bridge.example.com:8443</string>
 </dict>
 </plist>

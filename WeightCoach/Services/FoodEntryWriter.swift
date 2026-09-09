@@ -96,6 +96,59 @@ struct FoodEntryDraft {
         )
     }
 
+    /// 按历史记录的任意比例创建新的摄入快照。
+    ///
+    /// 只同比缩放原记录里已经存在的数值，不会为缺失营养素补造数据；图片与
+    /// HealthKit 样本 UUID 也不会被复制。调用方负责提供面向用户的份量说明。
+    init?(
+        scaledRepeatOf entry: FoodEntry,
+        multiplier: Double,
+        portionText: String?,
+        date: Date,
+        mealType: MealType
+    ) {
+        let scaledCalories = entry.calories * multiplier
+        guard entry.calories.isFinite,
+              entry.calories >= 0,
+              multiplier.isFinite,
+              multiplier > 0,
+              multiplier <= PortionRatioEngine.suggestedMaximum,
+              scaledCalories.isFinite else {
+            return nil
+        }
+
+        func scaled(_ value: Double?) -> Double? {
+            guard let value, value.isFinite, value >= 0 else { return nil }
+            let result = value * multiplier
+            return result.isFinite && result >= 0 ? result : nil
+        }
+
+        let scaledAmountValue = scaled(entry.amountValue)
+
+        self.init(
+            name: entry.name,
+            calories: scaledCalories,
+            protein: scaled(entry.protein),
+            carbs: scaled(entry.carbs),
+            fat: scaled(entry.fat),
+            portionText: portionText,
+            mealType: mealType,
+            source: .quickRepeat,
+            date: date,
+            barcode: entry.barcode,
+            foodProductID: entry.foodProductID,
+            amountValue: scaledAmountValue,
+            amountUnit: scaledAmountValue == nil ? nil : entry.amountUnit,
+            calculationVersion: entry.calculationVersion,
+            fiber: scaled(entry.fiber),
+            sugar: scaled(entry.sugar),
+            sodiumMg: scaled(entry.sodiumMg),
+            caffeineMg: scaled(entry.caffeineMg),
+            calorieLowerBound: scaled(entry.calorieLowerBound),
+            calorieUpperBound: scaled(entry.calorieUpperBound)
+        )
+    }
+
     func makeEntry() -> FoodEntry {
         FoodEntry(
             name: name,

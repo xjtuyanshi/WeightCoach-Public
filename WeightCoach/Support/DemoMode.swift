@@ -15,7 +15,11 @@ enum DemoMode {
         guard let index = args.firstIndex(of: "-uitab"),
               index + 1 < args.count,
               let tab = Int(args[index + 1]) else {
-            return demoExerciseEnabled ? 2 : 0
+            return (
+                demoExerciseEnabled
+                    || demoThirdPartyExerciseEnabled
+                    || demoExerciseHealthQueryFailureEnabled
+            ) ? 2 : 0
         }
         return min(max(tab, 0), 4)
     }
@@ -77,6 +81,17 @@ enum DemoMode {
     /// 把「常吃 + 最近」移到今日页顶部，便于稳定截图验收排序、标签和一键再记。
     static var demoRepeatFoodsEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains("-demoRepeatFoods")
+            || demoFrequentOverflowEnabled
+    }
+
+    /// 六种跨日常吃，验证前四种以外的常吃仍会填满剩余卡片。
+    static var demoFrequentOverflowEnabled: Bool {
+        isActive && ProcessInfo.processInfo.arguments.contains("-demoFrequentOverflow")
+    }
+
+    /// 打开完整历史复用页，并注入一条 45 天前的唯一记录验证不限近 30 天。
+    static var demoHistoryFoodRepeatEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains("-demoHistoryFoodRepeat")
     }
 
     /// 打开一句话补记，并自动演示“1 根烤肠、2 个鸡翅”的估算与确认流程。
@@ -92,6 +107,26 @@ enum DemoMode {
     /// 打开运动补记页，并注入一条不戴手表的篮球示例。
     static var demoExerciseEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains("-demoExercise")
+    }
+
+    /// 模拟同一次跑步同时被第三方 App 与 Apple 健康记录，用于验证日总不会
+    /// 重复、且手动补记会识别完整 workout 覆盖。
+    static var demoThirdPartyExerciseEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains("-demoThirdPartyExercise")
+    }
+
+    /// 首次手动运动核对失败，点击重试后恢复。仅用于模拟器
+    /// 验收 fail-closed 与重试交互，不改变任何真实 HealthKit 请求。
+    static var demoExerciseHealthQueryFailureEnabled: Bool {
+        isActive
+            && ProcessInfo.processInfo.arguments.contains(
+                "-demoExerciseHealthQueryFailure"
+            )
+    }
+
+    /// 模拟手机已记录 9,500 步、但没有活动能量样本的手表断电场景。
+    static var demoMissingActivityEnergyEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains("-demoMissingActivityEnergy")
     }
 
     /// 打开 7/30 天饮食与能量趋势，注入周末盈余、缺失日和宏量覆盖示例。
@@ -381,7 +416,7 @@ enum DemoMode {
                       portionText: text("1.0 份（60g）", "1.0 份（60g）", "1 serving (60 g)"),
                       mealType: .snack, source: .barcode, date: at(15, 40)),
         ]
-        if demoRepeatFoodsEnabled {
+        if demoRepeatFoodsEnabled || demoHistoryFoodRepeatEnabled {
             func onPreviousDay(
                 _ daysAgo: Int,
                 hour: Int,
@@ -399,8 +434,9 @@ enum DemoMode {
                     of: day
                 ) ?? day
             }
-            // 只有这个专用场景才注入跨日历史，避免改变其他演示和趋势数据。
-            foods.append(contentsOf: [
+            if demoRepeatFoodsEnabled {
+                // 只有这个专用场景才注入跨日历史，避免改变其他演示和趋势数据。
+                foods.append(contentsOf: [
                 FoodEntry(
                     name: "Kirkland Signature Protein Bar",
                     calories: 190,
@@ -468,7 +504,59 @@ enum DemoMode {
                     source: .ai,
                     date: onPreviousDay(3, hour: 12, minute: 36)
                 ),
-            ])
+                ])
+            }
+
+            if demoHistoryFoodRepeatEnabled {
+                foods.append(
+                    FoodEntry(
+                        name: text(
+                            "照烧三文鱼饭（45 天前）",
+                            "照燒鮭魚飯（45 天前）",
+                            "Teriyaki salmon bowl (45 days ago)"
+                        ),
+                        calories: 640,
+                        protein: 38,
+                        carbs: 72,
+                        fat: 22,
+                        portionText: text(
+                            "1 碗（演示历史）",
+                            "1 碗（示範歷史）",
+                            "1 bowl (demo history)"
+                        ),
+                        mealType: .dinner,
+                        source: .manual,
+                        date: onPreviousDay(45, hour: 19, minute: 15),
+                        fiber: 6,
+                        sugar: 10,
+                        sodiumMg: 980
+                    )
+                )
+            }
+            if demoFrequentOverflowEnabled {
+                // 独立验收数据：每种恰好出现两天，没有一次性食品补位。
+                // 使用参考库中文名，亦可验证用繁体/英文搜索旧记录。
+                foods = [
+                    "white-rice-cooked", "chicken-breast-cooked", "egg-hard-boiled",
+                    "banana-raw", "broccoli-raw", "shrimp-cooked",
+                ].enumerated().flatMap { index, id -> [FoodEntry] in
+                    guard let food = CommonFoodCatalog.food(id: id) else { return [] }
+                    let nutrition = food.nutritionPer100Grams
+                    return [1, 2].map { daysAgo in
+                        FoodEntry(
+                            name: food.localizedDisplayName(locale: Locale(identifier: "zh-Hans")),
+                            calories: nutrition.energyKcal.map { NSDecimalNumber(decimal: $0).doubleValue } ?? 0,
+                            protein: nutrition.proteinG.map { NSDecimalNumber(decimal: $0).doubleValue },
+                            carbs: nutrition.carbohydratesG.map { NSDecimalNumber(decimal: $0).doubleValue },
+                            fat: nutrition.fatG.map { NSDecimalNumber(decimal: $0).doubleValue },
+                            portionText: "100 g",
+                            mealType: .lunch,
+                            source: .manual,
+                            date: onPreviousDay(daysAgo, hour: 12, minute: 10 - index)
+                        )
+                    }
+                }
+            }
         }
         if demoTrendsEnabled {
             for daysAgo in 1...29 {

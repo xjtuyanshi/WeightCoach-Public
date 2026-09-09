@@ -1,6 +1,21 @@
 import Foundation
 import SwiftUI
 
+/// 决定每日热量预算采用哪一种目标缺口策略；不改变 BMR 或 TDEE 计算。
+enum DeficitStrategy: String, CaseIterable, Identifiable, Codable, Sendable {
+    case rapidFatLoss
+    case deadlinePaced
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .rapidFatLoss: return "尽快减脂（750 千卡/天）"
+        case .deadlinePaced: return "按日期达标（动态）"
+        }
+    }
+}
+
 /// 用户档案与减重目标。持久化到 UserDefaults。
 final class ProfileStore: ObservableObject {
     enum Keys {
@@ -11,6 +26,7 @@ final class ProfileStore: ObservableObject {
         static let goalEndDate = "goal.endDate"
         static let goalStartWeight = "goal.startWeight"
         static let goalWeight = "goal.weight"
+        static let deficitStrategy = "calc.deficitStrategy"
         static let activityFactor = "calc.activityFactor"
         static let includeActiveEnergy = "calc.includeActiveEnergy"
         static let foodReminderEnabled = "reminder.food.enabled"
@@ -32,6 +48,9 @@ final class ProfileStore: ObservableObject {
     @Published var goalEndDate: Date { didSet { defaults.set(goalEndDate, forKey: Keys.goalEndDate) } }
     @Published var goalStartWeight: Double { didSet { defaults.set(goalStartWeight, forKey: Keys.goalStartWeight) } }
     @Published var goalWeight: Double { didSet { defaults.set(goalWeight, forKey: Keys.goalWeight) } }
+    @Published var deficitStrategy: DeficitStrategy {
+        didSet { defaults.set(deficitStrategy.rawValue, forKey: Keys.deficitStrategy) }
+    }
 
     /// 基础活动系数（久坐 1.2 / 轻度 1.375 / 中度 1.55）
     @Published var activityFactor: Double { didSet { defaults.set(activityFactor, forKey: Keys.activityFactor) } }
@@ -120,6 +139,17 @@ final class ProfileStore: ObservableObject {
             key: Keys.goalWeight,
             defaultValue: 75.0
         )
+        if let rawStrategy = defaults.string(forKey: Keys.deficitStrategy),
+           let storedStrategy = DeficitStrategy(rawValue: rawStrategy) {
+            deficitStrategy = storedStrategy
+        } else {
+            // 公开版保留按日期动态调整的默认行为；固定 750 必须由使用者主动选择。
+            deficitStrategy = .deadlinePaced
+            defaults.set(
+                DeficitStrategy.deadlinePaced.rawValue,
+                forKey: Keys.deficitStrategy
+            )
+        }
 
         activityFactor = Self.existingOrSeed(
             defaults: defaults,

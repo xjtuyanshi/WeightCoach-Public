@@ -254,6 +254,177 @@ final class FoodEntryWriterTests: XCTestCase {
         XCTAssertNil(repeated.imageData)
     }
 
+    func testScaledHistoryRepeatScalesEveryKnownValueAndKeepsSnapshotIdentity() throws {
+        let productID = UUID()
+        let original = FoodEntry(
+            name: "虾仁炒饭",
+            calories: 640,
+            protein: 32,
+            carbs: 80,
+            fat: 20,
+            portionText: "1 盘",
+            mealType: .dinner,
+            source: .ai,
+            barcode: "12345678",
+            healthKitSampleUUID: UUID(),
+            foodProductID: productID,
+            amountValue: 1,
+            amountUnit: .servings,
+            calculationVersion: 3,
+            fiber: 8,
+            sugar: 12,
+            sodiumMg: 1_200,
+            caffeineMg: 40,
+            calorieLowerBound: 560,
+            calorieUpperBound: 720,
+            imageData: Data([9, 8, 7])
+        )
+        let date = Date(timeIntervalSince1970: 456_789)
+
+        let draft = try XCTUnwrap(
+            FoodEntryDraft(
+                scaledRepeatOf: original,
+                multiplier: 0.75,
+                portionText: "1 盘 × ¾",
+                date: date,
+                mealType: .lunch
+            )
+        )
+        let repeated = draft.makeEntry()
+
+        XCTAssertEqual(repeated.name, "虾仁炒饭")
+        XCTAssertEqual(repeated.calories, 480, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(repeated.protein), 24, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(repeated.carbs), 60, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(repeated.fat), 15, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(repeated.fiber), 6, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(repeated.sugar), 9, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(repeated.sodiumMg), 900, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(repeated.caffeineMg), 30, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(repeated.calorieLowerBound), 420, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(repeated.calorieUpperBound), 540, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(repeated.amountValue), 0.75, accuracy: 0.001)
+        XCTAssertEqual(repeated.amountUnit, .servings)
+        XCTAssertEqual(repeated.portionText, "1 盘 × ¾")
+        XCTAssertEqual(repeated.foodProductID, productID)
+        XCTAssertEqual(repeated.barcode, "12345678")
+        XCTAssertEqual(repeated.calculationVersion, 3)
+        XCTAssertEqual(repeated.date, date)
+        XCTAssertEqual(repeated.mealType, .lunch)
+        XCTAssertEqual(repeated.source, .quickRepeat)
+        XCTAssertNil(repeated.healthKitSampleUUID)
+        XCTAssertNil(repeated.imageData)
+    }
+
+    func testScaledHistoryRepeatKeepsMissingNutritionMissing() throws {
+        let original = FoodEntry(
+            name: "未知点心",
+            calories: 100,
+            mealType: .snack,
+            source: .manual
+        )
+
+        let draft = try XCTUnwrap(
+            FoodEntryDraft(
+                scaledRepeatOf: original,
+                multiplier: 1.3,
+                portionText: "历史份量 × 1.3",
+                date: .now,
+                mealType: .snack
+            )
+        )
+        let repeated = draft.makeEntry()
+
+        XCTAssertEqual(repeated.calories, 130, accuracy: 0.001)
+        XCTAssertNil(repeated.protein)
+        XCTAssertNil(repeated.carbs)
+        XCTAssertNil(repeated.fat)
+        XCTAssertNil(repeated.fiber)
+        XCTAssertNil(repeated.sugar)
+        XCTAssertNil(repeated.sodiumMg)
+        XCTAssertNil(repeated.caffeineMg)
+        XCTAssertNil(repeated.amountValue)
+    }
+
+    func testScaledHistoryRepeatRejectsNonPositiveAndNonFiniteMultipliers() {
+        let original = FoodEntry(
+            name: "香蕉",
+            calories: 105,
+            mealType: .snack,
+            source: .manual
+        )
+
+        XCTAssertNil(FoodEntryDraft(
+            scaledRepeatOf: original,
+            multiplier: 0,
+            portionText: nil,
+            date: .now,
+            mealType: .snack
+        ))
+        XCTAssertNil(FoodEntryDraft(
+            scaledRepeatOf: original,
+            multiplier: -.infinity,
+            portionText: nil,
+            date: .now,
+            mealType: .snack
+        ))
+        XCTAssertNil(FoodEntryDraft(
+            scaledRepeatOf: original,
+            multiplier: PortionRatioEngine.suggestedMaximum + 0.01,
+            portionText: nil,
+            date: .now,
+            mealType: .snack
+        ))
+
+        original.calories = .nan
+        XCTAssertNil(FoodEntryDraft(
+            scaledRepeatOf: original,
+            multiplier: 0.75,
+            portionText: nil,
+            date: .now,
+            mealType: .snack
+        ))
+
+        original.calories = Double.greatestFiniteMagnitude
+        XCTAssertNil(FoodEntryDraft(
+            scaledRepeatOf: original,
+            multiplier: PortionRatioEngine.suggestedMaximum,
+            portionText: nil,
+            date: .now,
+            mealType: .snack
+        ))
+    }
+
+    func testScaledHistoryRepeatDropsInvalidOptionalNutritionAndItsAmountUnit() throws {
+        let original = FoodEntry(
+            name: "异常历史数据",
+            calories: 100,
+            protein: -2,
+            carbs: .nan,
+            fat: .infinity,
+            mealType: .snack,
+            source: .manual,
+            amountValue: -1,
+            amountUnit: .servings,
+            caffeineMg: -50
+        )
+
+        let repeated = try XCTUnwrap(FoodEntryDraft(
+            scaledRepeatOf: original,
+            multiplier: 0.75,
+            portionText: nil,
+            date: .now,
+            mealType: .snack
+        )).makeEntry()
+
+        XCTAssertNil(repeated.protein)
+        XCTAssertNil(repeated.carbs)
+        XCTAssertNil(repeated.fat)
+        XCTAssertNil(repeated.caffeineMg)
+        XCTAssertNil(repeated.amountValue)
+        XCTAssertNil(repeated.amountUnit)
+    }
+
     func testWriterPersistsMultipleEntriesBeforeHealthSync() async throws {
         let context = try makeContext()
         let reminders = ReminderScheduler()
@@ -459,8 +630,8 @@ final class FoodEntryWriterTests: XCTestCase {
         let reminders = ReminderScheduler()
         let health = ControlledDietaryEnergyHealth()
         let completion = TestCompletionFlag()
-        let saveTask = Task<[FoodEntry], Error> {
-            let entries = try await FoodEntryWriter.save(
+        let saveTask = Task<Void, Error> {
+            _ = try await FoodEntryWriter.save(
                 drafts: [
                     FoodEntryDraft(
                         name: "快捷保存",
@@ -474,7 +645,6 @@ final class FoodEntryWriterTests: XCTestCase {
                 reminders: reminders
             )
             await completion.markComplete()
-            return entries
         }
 
         while !(await health.saveGate.hasStarted) {
@@ -487,9 +657,11 @@ final class FoodEntryWriterTests: XCTestCase {
         }
 
         XCTAssertTrue(saveCompleted)
-        let entries = try await saveTask.value
+        try await saveTask.value
+        let entries = try context.fetch(FetchDescriptor<FoodEntry>())
         let entry = try XCTUnwrap(entries.first)
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<FoodEntry>()), 1)
+        XCTAssertEqual(entry.name, "快捷保存")
         XCTAssertEqual(entry.healthKitSyncStatus, .pending)
 
         await health.saveGate.release()

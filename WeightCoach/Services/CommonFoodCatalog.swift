@@ -548,13 +548,12 @@ enum CommonFoodCatalog {
             return featuredFoodIDs.compactMap(food(id:))
         }
 
-        return foods.enumerated().compactMap {
-            pair -> (food: CommonFoodReference, score: Int, index: Int)? in
-            let (index, food) = pair
-            guard let score = matchScore(food, query: normalizedQuery) else {
+        return searchIndex.compactMap {
+            entry -> (food: CommonFoodReference, score: Int, index: Int)? in
+            guard let score = matchScore(entry, query: normalizedQuery) else {
                 return nil
             }
-            return (food, score, index)
+            return (entry.food, score, entry.index)
         }
         .sorted {
             if $0.score == $1.score {
@@ -581,27 +580,42 @@ enum CommonFoodCatalog {
         "greek-yogurt-nonfat"
     ]
 
+    private struct SearchIndexEntry {
+        let food: CommonFoodReference
+        let index: Int
+        let name: String
+        let aliases: [String]
+        let preparations: [String]
+    }
+
+    /// 参考库与三语文案随 App 版本固定。只在首次使用时解析一次本地化和
+    /// 归一化，输入每个字符时仅匹配字符串，避免主线程重复读取整份语言资源。
+    private static let searchIndex: [SearchIndexEntry] = foods.enumerated().map { index, food in
+        SearchIndexEntry(
+            food: food,
+            index: index,
+            name: normalized(food.name),
+            aliases: food.aliases.map(normalized) + supportedSearchLocales.map {
+                normalized(food.localizedName(locale: $0))
+            },
+            preparations: [food.preparation] + supportedSearchLocales.map {
+                food.localizedPreparation(locale: $0)
+            }
+            .map(normalized)
+        )
+    }
+
     private static func matchScore(
-        _ food: CommonFoodReference,
+        _ entry: SearchIndexEntry,
         query: String
     ) -> Int? {
-        let name = normalized(food.name)
-        let localizedNames = supportedSearchLocales.map {
-            normalized(food.localizedName(locale: $0))
-        }
-        let aliases = food.aliases.map(normalized) + localizedNames
-        let preparations = [food.preparation] + supportedSearchLocales.map {
-            food.localizedPreparation(locale: $0)
-        }
-        .map(normalized)
-
-        if name == query { return 0 }
-        if aliases.contains(query) { return 1 }
-        if name.hasPrefix(query) { return 2 }
-        if aliases.contains(where: { $0.hasPrefix(query) }) { return 3 }
-        if name.contains(query) { return 4 }
-        if aliases.contains(where: { $0.contains(query) }) { return 5 }
-        if preparations.contains(where: { $0.contains(query) }) { return 6 }
+        if entry.name == query { return 0 }
+        if entry.aliases.contains(query) { return 1 }
+        if entry.name.hasPrefix(query) { return 2 }
+        if entry.aliases.contains(where: { $0.hasPrefix(query) }) { return 3 }
+        if entry.name.contains(query) { return 4 }
+        if entry.aliases.contains(where: { $0.contains(query) }) { return 5 }
+        if entry.preparations.contains(where: { $0.contains(query) }) { return 6 }
         return nil
     }
 

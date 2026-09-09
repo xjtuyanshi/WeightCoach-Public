@@ -66,7 +66,7 @@ struct BodyCompositionProfile: Codable, Equatable {
     var skeletalMuscleMassKg: BodyCompositionMeasurement
     var smiKgPerSquareMeter: BodyCompositionMeasurement
     var historicalDEXA: DEXASnapshot
-    /// 个人饮食参考值；不进入 TDEE、动态缺口或每日预算计算。
+    /// 个人饮食参考值；不进入 TDEE、目标缺口策略或每日预算计算。
     var referenceDailyIntakeKcal: Double?
 
     static let empty = BodyCompositionProfile(

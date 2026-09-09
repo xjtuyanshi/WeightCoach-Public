@@ -51,11 +51,19 @@ protocol DietaryEnergyHealthManaging: AnyObject {
 }
 
 /// 与 Apple 健康交互：读取身体数据与活动能量，写入体重/体脂/饮食能量
+/// HealthKit 的 observer 回调可能跨线程；它们只捕获本对象后立即切回 MainActor，
+/// 可观察状态也只在 MainActor 标记的方法中更新。
 @Observable
-final class HealthKitManager: DietaryEnergyHealthManaging {
+final class HealthKitManager: DietaryEnergyHealthManaging, @unchecked Sendable {
     let store = HKHealthStore()
     @ObservationIgnored
     private let healthDataAvailable: () -> Bool
+    @ObservationIgnored
+    private var activityObserverQueries: [String: HKObserverQuery] = [:]
+    @ObservationIgnored
+    private var activityRefreshTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var activityRefreshPending = false
 
     var isAvailable: Bool { healthDataAvailable() }
     var authorizationRequested = false
@@ -73,8 +81,12 @@ final class HealthKitManager: DietaryEnergyHealthManaging {
     // 今日能量
     var todayActiveEnergyKcal: Double = 0
     var todayActiveEnergyIntervals: [HealthActiveEnergyInterval] = []
+    var todayWorkoutIntervals: [HealthWorkoutInterval] = []
+    var todayWorkoutCoverageAvailable = false
     var todayBasalEnergyKcal: Double = 0
     var todaySteps: Double = 0
+    var lastActivityRefreshDate: Date?
+    var activityDataErrorDescription: String?
 
     init(
         healthDataAvailable: @escaping () -> Bool = {
@@ -97,6 +109,8 @@ final class HealthKitManager: DietaryEnergyHealthManaging {
             Self.quantityType(.basalEnergyBurned),
             Self.quantityType(.stepCount),
             Self.quantityType(.dietaryEnergyConsumed),
+            HKObjectType.workoutType(),
+            HKObjectType.activitySummaryType(),
         ]
         if let dob = HKObjectType.characteristicType(forIdentifier: .dateOfBirth) { types.insert(dob) }
         if let sex = HKObjectType.characteristicType(forIdentifier: .biologicalSex) { types.insert(sex) }
@@ -122,6 +136,7 @@ final class HealthKitManager: DietaryEnergyHealthManaging {
             authorizationRequested = true
             authorizationErrorDescription = nil
             await refreshAll()
+            startObservingActivityChangesIfNeeded()
             return true
         } catch {
             authorizationErrorDescription = error.localizedDescription
@@ -149,11 +164,149 @@ final class HealthKitManager: DietaryEnergyHealthManaging {
             heightCm = sample.quantity.doubleValue(for: .meterUnit(with: .centi))
         }
 
-        let activeEnergyIntervals = await todayActiveEnergySamples()
-        todayActiveEnergyIntervals = activeEnergyIntervals
-        todayActiveEnergyKcal = activeEnergyIntervals.reduce(0) { $0 + $1.kcal }
-        todayBasalEnergyKcal = await todaySum(.basalEnergyBurned, unit: .kilocalorie())
-        todaySteps = await todaySum(.stepCount, unit: .count())
+        await refreshTodayActivityCoalesced()
+        todayBasalEnergyKcal = (try? await todaySum(
+            .basalEnergyBurned,
+            unit: .kilocalorie()
+        )) ?? 0
+        startObservingActivityChangesIfNeeded()
+    }
+
+    /// 刷新步数和活动能量，但保持两者是独立 HealthKit 数据。
+    /// 步数绝不会在这里静默换算成热量。
+    @MainActor
+    private func refreshTodayActivity() async {
+        var errors: [String] = []
+        // 查询完成前先停用手动补差，避免刷新窗口继续使用旧 workout 快照。
+        todayWorkoutCoverageAvailable = false
+
+        do {
+            let now = Date.now
+            let calendar = Calendar.current
+            let dayStart = calendar.startOfDay(for: now)
+            let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)
+                ?? dayStart.addingTimeInterval(86_400)
+            let intervals = try await todayActiveEnergySamples()
+            // Activity Summary 是更合适的日总口径，但它是可选增强：权限、设备
+            // 或当日数据导致查询不可用时，仍保留已经成功取得的统计回退值。
+            let summaryByDay = (try? await fetchActivitySummaryEnergyByDay(
+                from: dayStart,
+                to: dayEnd,
+                calendar: calendar
+            )) ?? [:]
+            todayActiveEnergyIntervals = intervals
+            // Activity Summary 是 Apple 活动圆环对当天活动能量的权威口径；
+            // 没有可用 summary（例如没有活动圆环数据）时才回退到统计查询。
+            todayActiveEnergyKcal = HealthActivityEnergyResolver.dailyTotal(
+                activitySummaryKcal: summaryByDay[dayStart],
+                statisticsIntervals: intervals
+            )
+        } catch {
+            // 查询失败时必须 fail closed，不能把上一次（尤其昨天）的活动热量
+            // 继续带入今天的 TDEE。
+            todayActiveEnergyIntervals = []
+            todayActiveEnergyKcal = 0
+            errors.append(error.localizedDescription)
+        }
+
+        do {
+            let now = Date.now
+            let start = Calendar.current.startOfDay(for: now)
+            todayWorkoutIntervals = try await fetchWorkoutIntervals(
+                from: start,
+                to: now
+            )
+            todayWorkoutCoverageAvailable = true
+        } catch {
+            // Workout 只用于判断手动补记是否已被健康数据覆盖。它的查询失败
+            // 不应抹掉刚刚成功读取的活动能量，更不能改变活动能量日总。
+            todayWorkoutIntervals = []
+            todayWorkoutCoverageAvailable = false
+            errors.append(error.localizedDescription)
+        }
+
+        do {
+            todaySteps = try await todaySum(.stepCount, unit: .count())
+        } catch {
+            todaySteps = 0
+            errors.append(error.localizedDescription)
+        }
+
+        if errors.isEmpty {
+            activityDataErrorDescription = nil
+            lastActivityRefreshDate = .now
+        } else {
+            activityDataErrorDescription = errors.joined(separator: "\n")
+        }
+    }
+
+    /// HealthKit 数据在 App 持续前台时也可能变化。Observer 只负责触发重新查询；
+    /// 实际数值仍由上面的同一查询路径产生。后台唤醒不在本次范围内。
+    @MainActor
+    private func startObservingActivityChangesIfNeeded() {
+        let sampleTypes: [HKSampleType] = [
+            Self.quantityType(.activeEnergyBurned),
+            Self.quantityType(.stepCount),
+            HKObjectType.workoutType(),
+        ]
+
+        for sampleType in sampleTypes {
+            let identifier = sampleType.identifier
+            guard activityObserverQueries[identifier] == nil else { continue }
+
+            let query = HKObserverQuery(
+                sampleType: sampleType,
+                predicate: nil
+            ) { [weak self] observerQuery, completion, error in
+                guard let self else {
+                    completion()
+                    return
+                }
+
+                Task { @MainActor in
+                    await self.refreshTodayActivityCoalesced()
+                    if let error {
+                        let observerError = error.localizedDescription
+                        if let queryError = self.activityDataErrorDescription,
+                           !queryError.isEmpty,
+                           queryError != observerError {
+                            self.activityDataErrorDescription =
+                                queryError + "\n" + observerError
+                        } else {
+                            self.activityDataErrorDescription = observerError
+                        }
+                        if let stored = self.activityObserverQueries[identifier],
+                           stored === observerQuery {
+                            self.store.stop(stored)
+                            self.activityObserverQueries.removeValue(forKey: identifier)
+                        }
+                    }
+                    completion()
+                }
+            }
+            activityObserverQueries[identifier] = query
+            store.execute(query)
+        }
+    }
+
+    @MainActor
+    private func refreshTodayActivityCoalesced() async {
+        activityRefreshPending = true
+        if let activityRefreshTask {
+            await activityRefreshTask.value
+            return
+        }
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while self.activityRefreshPending {
+                self.activityRefreshPending = false
+                await self.refreshTodayActivity()
+            }
+            self.activityRefreshTask = nil
+        }
+        activityRefreshTask = task
+        await task.value
     }
 
     private func readCharacteristics() {
@@ -205,15 +358,22 @@ final class HealthKitManager: DietaryEnergyHealthManaging {
         }
     }
 
-    private func todaySum(_ id: HKQuantityTypeIdentifier, unit: HKUnit) async -> Double {
-        await withCheckedContinuation { continuation in
+    private func todaySum(
+        _ id: HKQuantityTypeIdentifier,
+        unit: HKUnit
+    ) async throws -> Double {
+        try await withCheckedThrowingContinuation { continuation in
             let start = Calendar.current.startOfDay(for: .now)
             let predicate = HKQuery.predicateForSamples(withStart: start, end: nil, options: .strictStartDate)
             let query = HKStatisticsQuery(
                 quantityType: Self.quantityType(id),
                 quantitySamplePredicate: predicate,
                 options: .cumulativeSum
-            ) { _, statistics, _ in
+            ) { _, statistics, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
                 let value = statistics?.sumQuantity()?.doubleValue(for: unit) ?? 0
                 continuation.resume(returning: value)
             }
@@ -221,36 +381,16 @@ final class HealthKitManager: DietaryEnergyHealthManaging {
         }
     }
 
-    /// 读取今天开始至当前时刻的活动能量原始样本。
+    /// 读取今天开始至当前时刻的 HealthKit 活动能量统计分钟桶。
     ///
-    /// 今日总活动能量由这组区间直接求和，确保总数和后续按时间重叠去重使用同一份数据。
-    private func todayActiveEnergySamples() async -> [HealthActiveEnergyInterval] {
-        await withCheckedContinuation { continuation in
-            let now = Date.now
-            let start = Calendar.current.startOfDay(for: now)
-            let predicate = HKQuery.predicateForSamples(
-                withStart: start,
-                end: now,
-                options: .strictStartDate
-            )
-            let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
-            let query = HKSampleQuery(
-                sampleType: Self.quantityType(.activeEnergyBurned),
-                predicate: predicate,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: [sort]
-            ) { _, samples, _ in
-                let intervals = (samples as? [HKQuantitySample])?.compactMap { sample in
-                    HealthActiveEnergyInterval(
-                        startDate: sample.startDate,
-                        endDate: sample.endDate,
-                        kcal: sample.quantity.doubleValue(for: .kilocalorie())
-                    )
-                } ?? []
-                continuation.resume(returning: intervals)
-            }
-            store.execute(query)
-        }
+    /// 不能把 `HKSampleQuery` 返回的原始样本直接相加：Apple Watch、iPhone
+    /// 和第三方运动 App 可能在同一时段分别写入样本。分钟统计只用于手动运动
+    /// 的时间重叠与无 Activity Summary 时的回退；当天展示总数优先采用
+    /// `HKActivitySummary.activeEnergyBurned`。
+    private func todayActiveEnergySamples() async throws -> [HealthActiveEnergyInterval] {
+        let now = Date.now
+        let start = Calendar.current.startOfDay(for: now)
+        return try await mergedActiveEnergyIntervals(from: start, to: now)
     }
 
     /// 拉取一段时间内按自然日分桶的活动能量。
@@ -265,6 +405,53 @@ final class HealthKitManager: DietaryEnergyHealthManaging {
         let start = calendar.startOfDay(for: startDate)
         let end = calendar.startOfDay(for: endDate)
         guard end > start else { return [] }
+
+        async let statisticsTask = fetchDailyActiveEnergyStatistics(
+            from: start,
+            to: end,
+            calendar: calendar
+        )
+        async let summaryTask = fetchActivitySummaryEnergyByDay(
+            from: start,
+            to: end,
+            calendar: calendar
+        )
+        let statistics = try await statisticsTask
+        let summaries = (try? await summaryTask) ?? [:]
+
+        let statisticsByDay = Dictionary(
+            statistics.map {
+                (calendar.startOfDay(for: $0.dayStart), $0.kcal)
+            },
+            uniquingKeysWith: { _, newest in newest }
+        )
+        var readings: [DailyActiveEnergyReading] = []
+        var dayStart = start
+        while dayStart < end {
+            let statisticsValue = statisticsByDay[dayStart] ?? nil
+            readings.append(
+                DailyActiveEnergyReading(
+                    dayStart: dayStart,
+                    kcal: summaries[dayStart] ?? statisticsValue
+                )
+            )
+            guard let nextDay = calendar.date(
+                byAdding: .day,
+                value: 1,
+                to: dayStart
+            ), nextDay > dayStart else {
+                break
+            }
+            dayStart = nextDay
+        }
+        return readings
+    }
+
+    private func fetchDailyActiveEnergyStatistics(
+        from start: Date,
+        to end: Date,
+        calendar: Calendar
+    ) async throws -> [DailyActiveEnergyReading] {
 
         return try await withCheckedThrowingContinuation { continuation in
             let predicate = HKQuery.predicateForSamples(
@@ -310,6 +497,57 @@ final class HealthKitManager: DietaryEnergyHealthManaging {
         }
     }
 
+    /// 读取 Apple 活动圆环的每日活动能量。返回字典仅包含 HealthKit 实际提供
+    /// summary 的日期；调用方可对缺失日期回退到 quantity statistics。
+    private func fetchActivitySummaryEnergyByDay(
+        from startDate: Date,
+        to endDate: Date,
+        calendar: Calendar
+    ) async throws -> [Date: Double] {
+        let start = calendar.startOfDay(for: startDate)
+        let end = calendar.startOfDay(for: endDate)
+        guard end > start else { return [:] }
+
+        // HealthKit 要求 activity-summary predicate 的日期组件使用公历；结果
+        // 再映射回调用方日历的 dayStart，避免非公历系统设置查不到 summary。
+        var predicateCalendar = Calendar(identifier: .gregorian)
+        predicateCalendar.timeZone = calendar.timeZone
+        let components: Set<Calendar.Component> = [.era, .year, .month, .day]
+        var startComponents = predicateCalendar.dateComponents(
+            components,
+            from: start
+        )
+        startComponents.calendar = predicateCalendar
+        let lastIncludedDate = end.addingTimeInterval(-1)
+        var endComponents = predicateCalendar.dateComponents(
+            components,
+            from: lastIncludedDate
+        )
+        endComponents.calendar = predicateCalendar
+        let predicate = HKQuery.predicate(
+            forActivitySummariesBetweenStart: startComponents,
+            end: endComponents
+        )
+
+        let summaries = try await HKActivitySummaryQueryDescriptor(
+            predicate: predicate
+        ).result(for: store)
+        var byDay: [Date: Double] = [:]
+        for summary in summaries {
+            let kcal = summary.activeEnergyBurned.doubleValue(
+                for: .kilocalorie()
+            )
+            guard kcal.isFinite, kcal >= 0,
+                  let date = predicateCalendar.date(
+                    from: summary.dateComponents(for: predicateCalendar)
+                  ) else {
+                continue
+            }
+            byDay[calendar.startOfDay(for: date)] = kcal
+        }
+        return byDay
+    }
+
     /// 读取与手动运动区间重叠的活动能量原始样本，用于历史补差去重。
     func fetchActiveEnergyIntervals(
         overlapping intervals: [DateInterval]
@@ -319,28 +557,97 @@ final class HealthKitManager: DietaryEnergyHealthManaging {
         guard !merged.isEmpty else { return [] }
 
         return try await withThrowingTaskGroup(
-            of: [(UUID, HealthActiveEnergyInterval)].self
+            of: [HealthActiveEnergyInterval].self
         ) { group in
             for interval in merged {
                 group.addTask {
-                    try await self.fetchIdentifiedActiveEnergyIntervals(
-                        overlapping: interval
+                    try await self.mergedActiveEnergyIntervals(
+                        from: interval.start,
+                        to: interval.end
                     )
                 }
             }
 
-            var byUUID: [UUID: HealthActiveEnergyInterval] = [:]
+            var results: [HealthActiveEnergyInterval] = []
             for try await batch in group {
-                for (uuid, interval) in batch {
-                    byUUID[uuid] = interval
-                }
+                results.append(contentsOf: batch)
             }
-            return byUUID.values.sorted { lhs, rhs in
+            return results.sorted { lhs, rhs in
                 if lhs.startDate == rhs.startDate {
                     return lhs.endDate < rhs.endDate
                 }
                 return lhs.startDate < rhs.startDate
             }
+        }
+    }
+
+    /// 读取指定时间范围内与之相交的 HealthKit 运动快照。
+    ///
+    /// Workout 能量只表示对应手动补记已经有健康记录覆盖；这里不会把它加入
+    /// 活动能量日总，避免和 `activeEnergyBurned` 再算一次。
+    func fetchWorkoutIntervals(
+        from startDate: Date,
+        to endDate: Date
+    ) async throws -> [HealthWorkoutInterval] {
+        guard isAvailable,
+              startDate.timeIntervalSinceReferenceDate.isFinite,
+              endDate.timeIntervalSinceReferenceDate.isFinite,
+              endDate > startDate else {
+            return []
+        }
+
+        return try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<[HealthWorkoutInterval], Error>) in
+            let predicate = HKQuery.predicateForSamples(
+                withStart: startDate,
+                end: endDate,
+                options: []
+            )
+            let sort = NSSortDescriptor(
+                key: HKSampleSortIdentifierStartDate,
+                ascending: true
+            )
+            let query = HKSampleQuery(
+                sampleType: HKObjectType.workoutType(),
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [sort]
+            ) { _, samples, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                let activeEnergyType = Self.quantityType(.activeEnergyBurned)
+                let intervals = (samples as? [HKWorkout])?.compactMap {
+                    workout -> HealthWorkoutInterval? in
+                    guard workout.startDate < endDate,
+                          workout.endDate > startDate,
+                          workout.endDate > workout.startDate,
+                          let activityType = Self.exerciseActivityType(
+                              for: workout.workoutActivityType
+                          ) else {
+                        return nil
+                    }
+
+                    let activeEnergyKcal = workout
+                        .statistics(for: activeEnergyType)?
+                        .sumQuantity()?
+                        .doubleValue(for: .kilocalorie())
+                    let hasActiveEnergy = activeEnergyKcal.map {
+                        $0.isFinite && $0 > 0
+                    } ?? false
+
+                    return HealthWorkoutInterval(
+                        startDate: workout.startDate,
+                        endDate: workout.endDate,
+                        activityType: activityType,
+                        hasActiveEnergy: hasActiveEnergy
+                    )
+                } ?? []
+                continuation.resume(returning: intervals)
+            }
+            store.execute(query)
         }
     }
 
@@ -380,26 +687,50 @@ final class HealthKitManager: DietaryEnergyHealthManaging {
 
         let dailyActiveEnergy: [DailyActiveEnergyReading]
         let activeEnergyIntervals: [HealthActiveEnergyInterval]
+        let workoutIntervals: [HealthWorkoutInterval]
+        let manualOverlapDataAvailable: Bool
         if includeActiveEnergy {
             dailyActiveEnergy = try await fetchDailyActiveEnergy(
                 from: startDate,
                 to: endDate,
                 calendar: calendar
             )
-            activeEnergyIntervals = try await fetchActiveEnergyIntervals(
-                overlapping: exerciseIntervals
-            )
+            if exerciseIntervals.isEmpty {
+                activeEnergyIntervals = []
+                workoutIntervals = []
+                manualOverlapDataAvailable = true
+            } else {
+                activeEnergyIntervals = try await fetchActiveEnergyIntervals(
+                    overlapping: exerciseIntervals
+                )
+                // Workout 是更高置信的覆盖证据，但不是趋势页读取成功的
+                // 前置条件；失败时趋势仍可显示饮食等数据，但手动补差必须
+                // fail closed，不能把“查询失败”误当成“没有 workout”。
+                do {
+                    workoutIntervals = try await fetchWorkoutIntervals(
+                        from: startDate,
+                        to: endDate
+                    )
+                    manualOverlapDataAvailable = true
+                } catch {
+                    workoutIntervals = []
+                    manualOverlapDataAvailable = false
+                }
+            }
         } else {
             dailyActiveEnergy = []
             activeEnergyIntervals = []
+            workoutIntervals = []
+            manualOverlapDataAvailable = true
         }
 
         return try await HistoricalTrendHealthData(
             dailyActiveEnergy: dailyActiveEnergy,
             activeEnergyIntervals: activeEnergyIntervals,
+            workoutIntervals: workoutIntervals,
             weightPoints: weightPoints,
             bodyFatPoints: bodyFatPoints,
-            manualOverlapDataAvailable: true
+            manualOverlapDataAvailable: manualOverlapDataAvailable
         )
     }
 
@@ -507,45 +838,62 @@ final class HealthKitManager: DietaryEnergyHealthManaging {
         }
     }
 
-    private func fetchIdentifiedActiveEnergyIntervals(
-        overlapping interval: DateInterval
-    ) async throws -> [(UUID, HealthActiveEnergyInterval)] {
-        try await withCheckedThrowingContinuation { continuation in
+    /// HealthKit minute statistics preserve timing information for manual
+    /// exercise overlap. Daily totals prefer Activity Summary instead of
+    /// summing raw Watch, phone, and third-party samples ourselves.
+    private func mergedActiveEnergyIntervals(
+        from startDate: Date,
+        to endDate: Date
+    ) async throws -> [HealthActiveEnergyInterval] {
+        guard startDate.timeIntervalSinceReferenceDate.isFinite,
+              endDate.timeIntervalSinceReferenceDate.isFinite,
+              endDate > startDate else {
+            return []
+        }
+
+        return try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<[HealthActiveEnergyInterval], Error>) in
             let predicate = HKQuery.predicateForSamples(
-                withStart: interval.start,
-                end: interval.end,
+                withStart: startDate,
+                end: endDate,
                 options: []
             )
-            let sort = NSSortDescriptor(
-                key: HKSampleSortIdentifierStartDate,
-                ascending: true
+            let query = HKStatisticsCollectionQuery(
+                quantityType: Self.quantityType(.activeEnergyBurned),
+                quantitySamplePredicate: predicate,
+                options: .cumulativeSum,
+                anchorDate: startDate,
+                intervalComponents: DateComponents(minute: 1)
             )
-            let query = HKSampleQuery(
-                sampleType: Self.quantityType(.activeEnergyBurned),
-                predicate: predicate,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: [sort]
-            ) { _, samples, error in
+            query.initialResultsHandler = { _, collection, error in
                 if let error {
                     continuation.resume(throwing: error)
                     return
                 }
-                let identified = (samples as? [HKQuantitySample])?.compactMap {
-                    sample -> (UUID, HealthActiveEnergyInterval)? in
-                    guard sample.startDate < interval.end,
-                          sample.endDate >= interval.start,
-                          let value = HealthActiveEnergyInterval(
-                              startDate: sample.startDate,
-                              endDate: sample.endDate,
-                              kcal: sample.quantity.doubleValue(
-                                  for: .kilocalorie()
-                              )
+                guard let collection else {
+                    continuation.resume(returning: [])
+                    return
+                }
+
+                var intervals: [HealthActiveEnergyInterval] = []
+                collection.enumerateStatistics(from: startDate, to: endDate) {
+                    statistics, _ in
+                    guard let quantity = statistics.sumQuantity() else { return }
+                    let kcal = quantity.doubleValue(for: .kilocalorie())
+                    let bucketStart = max(startDate, statistics.startDate)
+                    let bucketEnd = min(endDate, statistics.endDate)
+                    guard kcal.isFinite,
+                          kcal > 0,
+                          let interval = HealthActiveEnergyInterval(
+                              startDate: bucketStart,
+                              endDate: bucketEnd,
+                              kcal: kcal
                           ) else {
-                        return nil
+                        return
                     }
-                    return (sample.uuid, value)
-                } ?? []
-                continuation.resume(returning: identified)
+                    intervals.append(interval)
+                }
+                continuation.resume(returning: intervals)
             }
             store.execute(query)
         }
@@ -578,6 +926,23 @@ final class HealthKitManager: DietaryEnergyHealthManaging {
         }
         merged.append(current)
         return merged
+    }
+
+    private static func exerciseActivityType(
+        for workoutType: HKWorkoutActivityType
+    ) -> ExerciseActivityType? {
+        switch workoutType {
+        case .running:
+            return .running
+        case .walking:
+            return .walking
+        case .basketball:
+            return .basketball
+        case .traditionalStrengthTraining, .functionalStrengthTraining:
+            return .strengthTraining
+        default:
+            return nil
+        }
     }
 
     // MARK: - 写入

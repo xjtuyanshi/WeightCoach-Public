@@ -31,7 +31,7 @@ struct FoodRepeatSuggestionResult: Equatable, Sendable {
 /// 从饮食历史实时生成「常吃 + 最近」，不新增持久化字段或迁移。
 ///
 /// - 常吃：最近 30 个日历日内至少在 2 个不同日期出现。
-/// - 最近：没有进入常吃的最新一次性食物。
+/// - 最近：优先常吃卡以外的最新食物，包括未进入前四名的其他常吃。
 /// - 再记模板：每组永远使用最新一条记录，因此沿用用户上次的份量。
 enum FoodRepeatSuggestionEngine {
     static func makeSuggestions(
@@ -119,8 +119,9 @@ enum FoodRepeatSuggestionEngine {
             .prefix(min(frequentLimit, totalLimit))
 
         let recentCapacity = max(0, totalLimit - frequent.count)
+        let selectedKeys = Set(frequent.map(\.key))
         let recent = rankedGroups
-            .filter { !$0.isFrequent }
+            .filter { !selectedKeys.contains($0.key) }
             .sorted(by: recentSort)
             .prefix(recentCapacity)
 

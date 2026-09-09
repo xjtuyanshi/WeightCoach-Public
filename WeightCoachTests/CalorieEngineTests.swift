@@ -84,6 +84,64 @@ final class CalorieEngineTests: XCTestCase {
         XCTAssertEqual(result, 250)
     }
 
+    func testRapidFatLossDeficitStaysAt750RegardlessOfDeadline() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let oneDay = CalorieEngine.targetDeficit(
+            strategy: .rapidFatLoss,
+            currentWeightKg: 76,
+            goalWeightKg: 75,
+            goalEndDate: now.addingTimeInterval(86_400),
+            now: now
+        )
+        let farFuture = CalorieEngine.targetDeficit(
+            strategy: .rapidFatLoss,
+            currentWeightKg: 76,
+            goalWeightKg: 75,
+            goalEndDate: now.addingTimeInterval(400 * 86_400),
+            now: now
+        )
+
+        XCTAssertEqual(oneDay, 750)
+        XCTAssertEqual(farFuture, 750)
+    }
+
+    func testRapidFatLossDeficitIsZeroAtOrBelowGoal() {
+        let goalDate = Date().addingTimeInterval(86_400)
+
+        XCTAssertEqual(
+            CalorieEngine.targetDeficit(
+                strategy: .rapidFatLoss,
+                currentWeightKg: 75,
+                goalWeightKg: 75,
+                goalEndDate: goalDate
+            ),
+            0
+        )
+        XCTAssertEqual(
+            CalorieEngine.targetDeficit(
+                strategy: .rapidFatLoss,
+                currentWeightKg: 74.5,
+                goalWeightKg: 75,
+                goalEndDate: goalDate
+            ),
+            0
+        )
+    }
+
+    func testDeadlineStrategyKeepsExistingDynamicFormula() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let result = CalorieEngine.targetDeficit(
+            strategy: .deadlinePaced,
+            currentWeightKg: 76,
+            goalWeightKg: 75,
+            goalEndDate: now.addingTimeInterval(10 * 86_400),
+            now: now
+        )
+
+        XCTAssertEqual(result, 770, accuracy: 0.001)
+    }
+
     func testDailyBudgetRespectsSexSpecificFloors() {
         XCTAssertEqual(
             CalorieEngine.dailyBudget(tdee: 1_800, deficit: 900, isMale: true),

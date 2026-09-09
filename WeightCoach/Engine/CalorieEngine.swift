@@ -5,6 +5,8 @@ enum CalorieEngine {
 
     /// 每公斤脂肪约 7700 千卡
     static let kcalPerKg: Double = 7700
+    /// 用户确认的“尽快减脂”固定目标缺口。
+    static let rapidFatLossDailyDeficit: Double = 750
 
     /// 基础代谢率。
     /// 有体脂率时用 Katch-McArdle（更准），否则用 Mifflin-St Jeor。
@@ -40,6 +42,29 @@ enum CalorieEngine {
         let remainingDays = max(1.0, goalEndDate.timeIntervalSince(now) / 86_400)
         let raw = remainingKg * kcalPerKg / remainingDays
         return min(max(raw, 250), 1000)
+    }
+
+    /// 根据用户选择返回目标缺口。这里只决定预算策略，不改变 TDEE。
+    static func targetDeficit(
+        strategy: DeficitStrategy,
+        currentWeightKg: Double,
+        goalWeightKg: Double,
+        goalEndDate: Date,
+        now: Date = .now
+    ) -> Double {
+        guard currentWeightKg > goalWeightKg else { return 0 }
+
+        switch strategy {
+        case .rapidFatLoss:
+            return rapidFatLossDailyDeficit
+        case .deadlinePaced:
+            return dailyDeficit(
+                currentWeightKg: currentWeightKg,
+                goalWeightKg: goalWeightKg,
+                goalEndDate: goalEndDate,
+                now: now
+            )
+        }
     }
 
     /// 今日热量预算（还能吃多少的上限）= TDEE − 缺口，且不低于安全底线。

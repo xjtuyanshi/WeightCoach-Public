@@ -73,13 +73,31 @@ struct DailyActiveEnergyReading: Equatable, Sendable {
 struct HistoricalTrendHealthData: Equatable, Sendable {
     let dailyActiveEnergy: [DailyActiveEnergyReading]
     let activeEnergyIntervals: [HealthActiveEnergyInterval]
+    let workoutIntervals: [HealthWorkoutInterval]
     let weightPoints: [HistoricalBodyPoint]
     let bodyFatPoints: [HistoricalBodyPoint]
     let manualOverlapDataAvailable: Bool
 
+    init(
+        dailyActiveEnergy: [DailyActiveEnergyReading],
+        activeEnergyIntervals: [HealthActiveEnergyInterval],
+        workoutIntervals: [HealthWorkoutInterval] = [],
+        weightPoints: [HistoricalBodyPoint],
+        bodyFatPoints: [HistoricalBodyPoint],
+        manualOverlapDataAvailable: Bool
+    ) {
+        self.dailyActiveEnergy = dailyActiveEnergy
+        self.activeEnergyIntervals = activeEnergyIntervals
+        self.workoutIntervals = workoutIntervals
+        self.weightPoints = weightPoints
+        self.bodyFatPoints = bodyFatPoints
+        self.manualOverlapDataAvailable = manualOverlapDataAvailable
+    }
+
     static let empty = HistoricalTrendHealthData(
         dailyActiveEnergy: [],
         activeEnergyIntervals: [],
+        workoutIntervals: [],
         weightPoints: [],
         bodyFatPoints: [],
         manualOverlapDataAvailable: true
@@ -245,6 +263,7 @@ enum HistoricalTrendEngine {
                     healthSamples: healthData.activeEnergyIntervals.map(
                         HealthActiveEnergySample.init
                     ),
+                    healthWorkouts: healthData.workoutIntervals,
                     within: dayInterval
                 )
                 : ManualExerciseSupplement(

@@ -185,6 +185,93 @@ final class TodayBudgetMetricsTests: XCTestCase {
         XCTAssertEqual(changed.budget, baseline.budget, accuracy: 0.001)
     }
 
+    func testDeficitStrategyChangesBudgetWithoutChangingTDEE() {
+        let profile = ProfileStore(defaults: defaults)
+        let health = HealthKitManager()
+        let referenceDate = Date(timeIntervalSince1970: 1_800_000_000)
+        health.latestWeightKg = 80
+        health.latestWeightDate = referenceDate
+        health.todayActiveEnergyKcal = 600
+        profile.goalWeight = 75
+        profile.goalEndDate = referenceDate.addingTimeInterval(400 * 86_400)
+
+        profile.deficitStrategy = .rapidFatLoss
+        let rapid = TodayBudgetMetrics.calculate(
+            profile: profile,
+            health: health,
+            todayFoods: [],
+            localWeights: [],
+            referenceDate: referenceDate
+        )
+
+        profile.deficitStrategy = .deadlinePaced
+        let deadline = TodayBudgetMetrics.calculate(
+            profile: profile,
+            health: health,
+            todayFoods: [],
+            localWeights: [],
+            referenceDate: referenceDate
+        )
+
+        XCTAssertEqual(rapid.deficit, 750)
+        XCTAssertEqual(deadline.deficit, 250)
+        XCTAssertEqual(rapid.bmr, deadline.bmr, accuracy: 0.001)
+        XCTAssertEqual(rapid.tdee, deadline.tdee, accuracy: 0.001)
+        XCTAssertEqual(
+            rapid.healthActiveEnergy,
+            deadline.healthActiveEnergy,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            rapid.effectiveActiveEnergy,
+            deadline.effectiveActiveEnergy,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(deadline.budget - rapid.budget, 500, accuracy: 0.001)
+    }
+
+    func testRapidDeficitStopsAfterGoalIsReached() {
+        let profile = ProfileStore(defaults: defaults)
+        profile.deficitStrategy = .rapidFatLoss
+        profile.goalWeight = 90
+        let health = HealthKitManager()
+        health.latestWeightKg = 90
+        health.latestWeightDate = .now
+
+        let metrics = TodayBudgetMetrics.calculate(
+            profile: profile,
+            health: health,
+            todayFoods: [],
+            localWeights: []
+        )
+
+        XCTAssertEqual(metrics.deficit, 0)
+        XCTAssertEqual(metrics.budget, metrics.tdee, accuracy: 0.001)
+    }
+
+    func testStepsWithoutActiveEnergyDoNotSilentlyIncreaseTDEE() {
+        let profile = ProfileStore(defaults: defaults)
+        profile.includeActiveEnergy = true
+        let health = HealthKitManager()
+        health.latestWeightKg = 80
+        health.latestWeightDate = .now
+        health.todaySteps = 9_500
+        health.todayActiveEnergyKcal = 0
+        health.todayActiveEnergyIntervals = []
+
+        let metrics = TodayBudgetMetrics.calculate(
+            profile: profile,
+            health: health,
+            todayFoods: [],
+            localWeights: []
+        )
+
+        XCTAssertEqual(metrics.healthActiveEnergy, 0)
+        XCTAssertEqual(metrics.manualExerciseSupplementalEnergy, 0)
+        XCTAssertEqual(metrics.effectiveActiveEnergy, 0)
+        XCTAssertEqual(metrics.tdee, metrics.bmr * 1.1, accuracy: 0.001)
+    }
+
     func testManualExerciseOnlyAddsEnergyMissingFromAppleHealth() throws {
         let profile = ProfileStore(defaults: defaults)
         profile.includeActiveEnergy = true
@@ -192,6 +279,7 @@ final class TodayBudgetMetricsTests: XCTestCase {
         health.latestWeightKg = 80
         health.latestWeightDate = Date(timeIntervalSince1970: 10_000)
         health.todayActiveEnergyKcal = 450
+        health.todayWorkoutCoverageAvailable = true
 
         let referenceDate = Date(timeIntervalSince1970: 20_000)
         let start = referenceDate.addingTimeInterval(-3_600)
@@ -231,6 +319,129 @@ final class TodayBudgetMetricsTests: XCTestCase {
             metrics.bmr * 1.1 + 750,
             accuracy: 0.001
         )
+    }
+
+    func testAuthoritativeHealthTotalIsNotRecomputedFromOverlappingIntervals() throws {
+        let profile = ProfileStore(defaults: defaults)
+        profile.includeActiveEnergy = true
+        let health = HealthKitManager()
+        health.latestWeightKg = 80
+        health.latestWeightDate = .now
+        health.todayActiveEnergyKcal = 450
+        let start = Calendar.current.startOfDay(for: .now)
+        let duplicate = try XCTUnwrap(
+            HealthActiveEnergyInterval(
+                startDate: start,
+                endDate: start.addingTimeInterval(3_600),
+                kcal: 450
+            )
+        )
+        health.todayActiveEnergyIntervals = [duplicate, duplicate]
+
+        let metrics = TodayBudgetMetrics.calculate(
+            profile: profile,
+            health: health,
+            todayFoods: [],
+            localWeights: []
+        )
+
+        XCTAssertEqual(metrics.healthActiveEnergy, 450)
+        XCTAssertEqual(metrics.effectiveActiveEnergy, 450)
+        XCTAssertEqual(metrics.tdee, metrics.bmr * 1.1 + 450, accuracy: 0.001)
+    }
+
+    func testMatchingHealthWorkoutPreventsMetTopUp() throws {
+        let profile = ProfileStore(defaults: defaults)
+        profile.includeActiveEnergy = true
+        let health = HealthKitManager()
+        health.latestWeightKg = 80
+        health.latestWeightDate = .now
+        health.todayActiveEnergyKcal = 450
+        health.todayWorkoutCoverageAvailable = true
+
+        let referenceDate = Date(timeIntervalSince1970: 20_000)
+        let start = referenceDate.addingTimeInterval(-3_600)
+        health.todayActiveEnergyIntervals = [
+            try XCTUnwrap(
+                HealthActiveEnergyInterval(
+                    startDate: start,
+                    endDate: referenceDate,
+                    kcal: 120
+                )
+            ),
+        ]
+        health.todayWorkoutIntervals = [
+            HealthWorkoutInterval(
+                startDate: start,
+                endDate: referenceDate,
+                activityType: .basketball,
+                hasActiveEnergy: true
+            ),
+        ]
+        let exercise = try XCTUnwrap(
+            ExerciseEntry.estimated(
+                startDate: start,
+                durationMinutes: 60,
+                intensity: .basketballGeneral,
+                weightKg: 80
+            )
+        )
+
+        let metrics = TodayBudgetMetrics.calculate(
+            profile: profile,
+            health: health,
+            todayFoods: [],
+            localWeights: [],
+            exercises: [exercise],
+            referenceDate: referenceDate
+        )
+
+        XCTAssertEqual(metrics.manualExerciseEstimatedEnergy, 420, accuracy: 0.001)
+        XCTAssertEqual(metrics.manualExerciseHealthOverlap, 120, accuracy: 0.001)
+        XCTAssertEqual(
+            metrics.manualExerciseHealthWorkoutCoveredMinutes,
+            60,
+            accuracy: 0.001
+        )
+        XCTAssertTrue(metrics.manualExerciseUsedHealthWorkoutCoverage)
+        XCTAssertEqual(metrics.manualExerciseSupplementalEnergy, 0, accuracy: 0.001)
+        XCTAssertEqual(metrics.effectiveActiveEnergy, 450, accuracy: 0.001)
+        XCTAssertEqual(metrics.tdee, metrics.bmr * 1.1 + 450, accuracy: 0.001)
+    }
+
+    func testWorkoutQueryFailureFailsClosedInsteadOfRestoringMETTopUp() throws {
+        let profile = ProfileStore(defaults: defaults)
+        profile.includeActiveEnergy = true
+        let health = HealthKitManager()
+        health.latestWeightKg = 80
+        health.latestWeightDate = .now
+        health.todayActiveEnergyKcal = 450
+        health.todayWorkoutCoverageAvailable = false
+
+        let referenceDate = Date(timeIntervalSince1970: 20_000)
+        let exercise = try XCTUnwrap(
+            ExerciseEntry.estimated(
+                startDate: referenceDate.addingTimeInterval(-3_600),
+                durationMinutes: 60,
+                intensity: .runningModerate,
+                weightKg: 80
+            )
+        )
+
+        let metrics = TodayBudgetMetrics.calculate(
+            profile: profile,
+            health: health,
+            todayFoods: [],
+            localWeights: [],
+            exercises: [exercise],
+            referenceDate: referenceDate
+        )
+
+        XCTAssertFalse(metrics.manualExerciseCoverageAvailable)
+        XCTAssertGreaterThan(metrics.manualExerciseEstimatedEnergy, 0)
+        XCTAssertEqual(metrics.manualExerciseSupplementalEnergy, 0)
+        XCTAssertEqual(metrics.effectiveActiveEnergy, 450)
+        XCTAssertEqual(metrics.tdee, metrics.bmr * 1.1 + 450, accuracy: 0.001)
     }
 
     func testManualExerciseDoesNotAlterActivityFactorMode() throws {

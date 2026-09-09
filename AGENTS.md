@@ -53,15 +53,32 @@ xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoExercise
 xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoCommonFood
 # 把“常吃与最近”移到今日页顶部，验证 30 天排序、一键再记与撤销：
 xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoRepeatFoods
+# 打开完整历史复用页，验证 45 天前的记录、搜索与任意食用比例：
+xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoHistoryFoodRepeat
+# 模拟第三方跑步与 Apple 健康重复来源，验证日总口径与完整 workout 覆盖拦截：
+xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoThirdPartyExercise
+# 首次运动核对失败、点击重试后成功，验证无法核对时不补加热量：
+xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoExerciseHealthQueryFailure
+# 模拟手机有 9,500 步但没有活动能量，验证提示与手动补记入口：
+xcrun simctl launch <UDID> com.lukegogogo.WeightCoach -demoData -demoMissingActivityEnergy
 ```
 
 模拟器注意：无摄像头（拍照/实时扫码不可用，扫码页会自动降级为手动输码）、无健康数据（所以有 DemoMode）。真机才能完整测 HealthKit 和相机。机器上已有 iPhone 17 Pro 模拟器（iOS 26.5）。
+
+## UI 交互验收门槛（强制）
+
+- 构建成功和单元测试通过只能证明代码完整性，**不能**证明按钮、表单、弹窗、导航或手势真的可用。
+- 凡是修改用户可见交互，或修复“点击后发生错误行为”的问题，在声称完成、安装真机或合并前，必须通过模拟器、浏览器或真机的真实 UI 自动化实际操作该路径；至少点击本次改动的控件、同一容器内的相邻/破坏性控件，以及保存后的重试或返回路径。
+- 每条 UI 验收必须读取操作后的可见状态，并保留至少一种证据（截图、录屏、可访问性树或 UI 测试结果）。只看源码、Preview、编译日志或单元测试不得标为“交互已验证”。
+- 能在现有 UI 测试 target 中自动化的回归必须加自动化用例；没有 UI 测试 target、且新增 target 会涉及工程配置时，不得手改 `project.pbxproj`，应先用 Computer Use 做可重复的真实点击验收，并把新增 target 作为独立工程变更处理。
+- HealthKit、相机、通知、麦克风、后台恢复等硬件/系统行为必须再做真机验收。模拟器通过时只能明确写“模拟器交互通过”。
+- 若环境阻塞导致真实交互没有执行，必须明确写“未验证”和唯一阻塞；不得用 `BUILD SUCCEEDED`、安装成功或进程存在替代产品验收结论。
 
 ## 核心业务决策（改前三思）
 
 1. **TDEE 用「替代模型」**：开启手表活动能量时 `TDEE = BMR × 1.1(仅食物热效应) + 全天活动能量`，活动系数**不参与**；关闭时才用 `BMR × 活动系数`。原因：Apple Watch 的 activeEnergyBurned 覆盖全天所有活动（不只锻炼），若叠加久坐系数 1.2 会把日常活动算两遍（多算 150-300 千卡/天）。这是一次审查修复的结论，别改回叠加模型。
 2. **BMR**：有体脂率用 Katch-McArdle（370 + 21.6×瘦体重），否则 Mifflin-St Jeor。
-3. **每日缺口动态化**：`剩余kg × 7700 / 剩余天数`，钳位 [250, 1000] 千卡；预算下限男 1500 / 女 1200。
+3. **每日目标缺口策略**：公开版默认“按目标日期动态调整”，新安装及没有策略配置的旧安装均使用 `.deadlinePaced`；公式为 `剩余kg × 7700 / 剩余天数`，钳位 [250, 1000] 千卡。用户可主动选择“尽快减脂”，在未达标时固定 750 千卡/天。两种模式都使用预算下限男 1500 / 女 1200，不得改变 TDEE 替代模型，不得把某位用户的选择设为公开默认值。
 4. **数据优先级**：HealthKit 数据优先，ProfileStore 里的身高/年龄/性别只是兜底；体重取 HealthKit 与本地记录中较新者。
 5. **AI 识别**：App 不跳转到外部聊天界面，也不在 iPhone 客户端保存云端 API Key。图片识别只依赖 `FoodRecognitionProviding`，一句话补记只依赖独立的 `FoodTextRecognitionProviding`；二者都通过每位使用者自己的 Mac mini 私有桥使用已登录的 ChatGPT 会话，客户端不得携带 prompt、API Key 或任意命令字段。文字原句只通过 Codex stdin 传递，不进进程参数或服务日志；文字请求使用规范 UUID v4，关闭页面或重新估算时必须以同一 ID 调用鉴权取消端点并先释放旧任务，避免占用单任务槽。日期和餐次由 App 决定且必须单独确认，所有文字估算都必须逐项人工确认后才调用 `FoodEntryWriter`。确认后编辑名称、份量或热量必须撤销该项确认并清空旧的派生营养值。不得把演示 Provider 当真实识别，也不得恢复客户端 Claude/OpenAI API。任何未来凭据仍只能进钥匙串，绝不硬编码、不进 UserDefaults、不进仓库。
 6. **条码**：本地 `FoodProduct` 缓存优先，未命中再查 Open Food Facts v2（免 Key，必须带自定义 User-Agent；`serving_quantity` 可能是字符串，解析用 JSONSerialization 容错）。仍查不到 → 直接扫描包装营养表：Apple Vision 本机 OCR，规则解析必须排除 `%DV`，低置信/近似值必须由用户确认，按条码缓存后下次秒开。原始标签照片不持久化、不上传。手动只填热量时营养素记 nil（别按 100g 折算）。

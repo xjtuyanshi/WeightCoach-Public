@@ -80,6 +80,39 @@ struct RootView: View {
         .task {
             if DemoMode.isActive {
                 DemoMode.seedIfNeeded(context: modelContext)
+                health.todayWorkoutCoverageAvailable = true
+                if DemoMode.demoMissingActivityEnergyEnabled {
+                    health.todaySteps = 9_500
+                    health.todayActiveEnergyKcal = 0
+                    health.todayActiveEnergyIntervals = []
+                    health.lastActivityRefreshDate = .now
+                    health.activityDataErrorDescription = nil
+                }
+                if DemoMode.demoThirdPartyExerciseEnabled {
+                    let now = Date.now
+                    let workoutStart = now.addingTimeInterval(-3_900)
+                    let workoutEnd = now.addingTimeInterval(300)
+                    let duplicatedEnergy = HealthActiveEnergyInterval(
+                        startDate: workoutStart,
+                        endDate: now,
+                        kcal: 450
+                    )
+                    // 450 kcal 代表 Apple 活动圆环的权威日总；重复区间模拟
+                    // Watch 与第三方跑步 App 同时写入相同活动能量。
+                    health.todayActiveEnergyKcal = 450
+                    health.todayActiveEnergyIntervals = [duplicatedEnergy, duplicatedEnergy]
+                        .compactMap { $0 }
+                    health.todayWorkoutIntervals = [
+                        HealthWorkoutInterval(
+                            startDate: workoutStart,
+                            endDate: workoutEnd,
+                            activityType: .running,
+                            hasActiveEnergy: true
+                        ),
+                    ]
+                    health.lastActivityRefreshDate = now
+                    health.activityDataErrorDescription = nil
+                }
                 showDemoBarcode = DemoMode.demoBarcodeCode != nil
                     || DemoMode.demoNutritionLabelEnabled
                 showDemoCapture = DemoMode.demoCaptureEnabled

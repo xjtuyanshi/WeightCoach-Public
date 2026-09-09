@@ -14,6 +14,7 @@ struct FoodLogView: View {
     @State private var showAIScan = false
     @State private var showSentenceBackfill = false
     @State private var showBarcodeScan = false
+    @State private var showFoodHistory = false
     @State private var isRepeatingFood = false
     @State private var undoEntry: FoodEntry?
     @State private var repeatMessage: String?
@@ -147,6 +148,15 @@ struct FoodLogView: View {
                         } label: {
                             Label("手动", systemImage: "square.and.pencil")
                         }
+                        Divider()
+                        Button {
+                            showFoodHistory = true
+                        } label: {
+                            Label(
+                                "从历史记录添加",
+                                systemImage: "clock.arrow.circlepath"
+                            )
+                        }
                     } label: {
                         Label("记录", systemImage: "plus.circle.fill")
                     }
@@ -160,6 +170,14 @@ struct FoodLogView: View {
             }
             .sheet(isPresented: $showAIScan) { AIFoodScanView(defaultDate: entryDate) }
             .sheet(isPresented: $showBarcodeScan) { BarcodeScanView(defaultDate: entryDate) }
+            .sheet(isPresented: $showFoodHistory) {
+                HistoryFoodRepeatView { entry in
+                    selectedDate = .now
+                    undoEntry = entry
+                    actionError = nil
+                    repeatMessage = recordedFoodMessage(entry.name)
+                }
+            }
             .safeAreaInset(edge: .bottom) {
                 if let repeatMessage {
                     repeatToast(repeatMessage)
@@ -236,8 +254,7 @@ struct FoodLogView: View {
                     reminders: reminders
                 )
                 undoEntry = saved.first
-                repeatMessage =
-                    "\(interfaceLocalized("已记录", locale: locale)) \(food.name)"
+                repeatMessage = recordedFoodMessage(food.name)
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
             } catch {
                 actionError = error.localizedDescription
@@ -316,6 +333,17 @@ struct FoodLogView: View {
             } catch {
                 actionError = error.localizedDescription
             }
+        }
+    }
+
+    private func recordedFoodMessage(_ name: String) -> String {
+        switch AppLanguage.system.resolvedLanguage(systemLocale: locale) {
+        case .english:
+            return "Logged \(name)"
+        case .traditionalChinese:
+            return "已記錄 \(name)"
+        case .simplifiedChinese, .system:
+            return "已记录 \(name)"
         }
     }
 }

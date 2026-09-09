@@ -30,6 +30,8 @@ enum BridgeConfiguration {
     static let userDefaultsDisabledKey = "recognition.bridge.disabled"
     static let bundledResourceName = "BridgeConfigLocal"
     static let bundledURLKey = "BridgeBaseURL"
+    static let restoreBundledConfigurationArgument =
+        "-restoreBundledBridgeConfiguration"
 
     static func validatedBaseURL(_ rawValue: String?) throws -> URL {
         let trimmed = rawValue?
@@ -110,6 +112,37 @@ enum BridgeConfiguration {
     static func clear(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: userDefaultsURLKey)
         defaults.set(true, forKey: userDefaultsDisabledKey)
+    }
+
+    /// Explicit repair path for a personal development build whose bundled
+    /// bridge URL was disabled by a prior UI bug. Normal launches never alter
+    /// the user's saved/disabled choice, and public builds have no bundled URL.
+    @discardableResult
+    static func restoreBundledConfigurationIfRequested(
+        arguments: [String] = ProcessInfo.processInfo.arguments,
+        defaults: UserDefaults = .standard,
+        bundle: Bundle = .main
+    ) -> URL? {
+        guard arguments.contains(restoreBundledConfigurationArgument) else {
+            return nil
+        }
+        return restoreBundledConfiguration(
+            bundledValue: bundledValue(in: bundle),
+            defaults: defaults
+        )
+    }
+
+    @discardableResult
+    static func restoreBundledConfiguration(
+        bundledValue: String?,
+        defaults: UserDefaults
+    ) -> URL? {
+        guard let url = try? validatedBaseURL(bundledValue) else {
+            return nil
+        }
+        defaults.set(url.absoluteString, forKey: userDefaultsURLKey)
+        defaults.removeObject(forKey: userDefaultsDisabledKey)
+        return url
     }
 
     private static func bundledValue(in bundle: Bundle) -> String? {

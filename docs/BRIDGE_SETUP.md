@@ -11,7 +11,7 @@ WeightCoach 不包含公共 AI 服务，也不在 iPhone App 内保存 OpenAI、
 
 1. 在自己的 Mac 上部署 `MacMiniBridge/`，并使用自己的 ChatGPT 登录和自己的
    私有网络访问控制。
-2. 确保桥接通过有效的 `https://` 地址访问。
+2. 确保桥接通过安装器打印的完整 `https://` 地址访问，包括专用端口 `:8443`。
 3. 在 App 的“设置 → AI 识别”中填写该 HTTPS 地址并保存。
 4. 使用“重新检测”确认桥接在线，再上传照片或饮食文字。
 
@@ -33,7 +33,8 @@ Config/BridgeConfigLocal.example.plist
 WeightCoach/BridgeConfigLocal.plist
 ```
 
-然后把其中 `BridgeBaseURL` 改为自己的 HTTPS 桥接地址。真实文件已被 `.gitignore`
+然后把其中 `BridgeBaseURL` 改为安装器打印的完整 HTTPS 桥接地址（默认包含
+`:8443`）。真实文件已被 `.gitignore`
 排除，不能提交；示例文件不包含任何真实设备地址。Xcode 的 synchronized folder
 会把该本地 plist 收入当前构建。App 中显式保存的地址优先于本地 plist；在设置中
 “清除并禁用”后，本地 plist 也不会被使用，除非重新填写地址或清除 App 数据。

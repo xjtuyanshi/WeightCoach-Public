@@ -119,9 +119,180 @@ final class AppLanguageTests: XCTestCase {
 
     func testCoreFlowCopyUsesEnglishAndTraditionalCatalogs() {
         let examples: [(key: String, english: String, traditional: String)] = [
+            ("减脂方式", "Fat-Loss Approach", "減脂方式"),
+            (
+                "尽快减脂（750 千卡/天）",
+                "Fast Fat Loss (750 kcal/day)",
+                "盡快減脂（每天 750 大卡）"
+            ),
+            (
+                "按日期达标（动态）",
+                "Reach Goal by Date (Dynamic)",
+                "按日期達標（動態）"
+            ),
+            ("参考目标日期", "Reference Goal Date", "參考目標日期"),
+            ("尽快减脂", "Fast Fat Loss", "盡快減脂"),
+            ("计划缺口", "Planned Deficit", "計畫缺口"),
+            (
+                "实际缺口（最低摄入量限制）",
+                "Actual Deficit (Calorie Floor)",
+                "實際缺口（最低攝取量限制）"
+            ),
+            (
+                "选择固定 750 千卡缺口，或按目标日期动态调整。",
+                "Choose a fixed 750 kcal deficit or dynamic pacing by goal date.",
+                "選擇固定 750 大卡缺口，或依目標日期動態調整。"
+            ),
+            (
+                "固定为每天 750 千卡；达到目标体重后归零。若触及最低摄入量，实际缺口会小于 750 千卡。",
+                "Fixed at 750 kcal per day until goal weight is reached. If the calorie floor applies, the actual deficit will be below 750 kcal.",
+                "固定為每天 750 大卡；達到目標體重後歸零。若觸及最低攝取量下限，實際缺口會低於 750 大卡。"
+            ),
+            (
+                "按剩余体重和目标日期动态调整为每天 250～1,000 千卡。",
+                "Adjusts dynamically between 250 and 1,000 kcal per day based on remaining weight and the goal date.",
+                "依剩餘體重和目標日期動態調整為每天 250～1,000 大卡。"
+            ),
+            (
+                "此模式每天保持 750 千卡计划缺口；目标日期仅供进度参考，今日热量目标仍受最低摄入量下限约束。",
+                "This mode plans a deficit of 750 kcal per day. The goal date is for progress reference only, and today’s calorie goal still respects the calorie floor.",
+                "此模式每天維持 750 大卡計畫缺口；目標日期僅供進度參考，今日熱量目標仍受最低攝取量下限約束。"
+            ),
+            (
+                "每日计划缺口会按剩余体重和目标日期动态调整。",
+                "The daily planned deficit adjusts dynamically based on remaining weight and the goal date.",
+                "每日計畫缺口會依剩餘體重和目標日期動態調整。"
+            ),
+            (
+                "虚线为参考目标轨迹；日期不参与尽快减脂预算。",
+                "The dashed line is a reference goal path; the date doesn’t affect the fast-fat-loss budget.",
+                "虛線為參考目標軌跡；日期不會影響盡快減脂預算。"
+            ),
+            ("参考目标轨迹", "Reference Goal Path", "參考目標軌跡"),
+            (
+                "这是个人参考，不会替代今日预算，也不会改变 TDEE 替代模型、目标缺口策略或安全下限。",
+                "This is a personal reference only. It doesn’t replace today’s budget or change the TDEE replacement model, target-deficit approach, or safety floor.",
+                "這是個人參考，不會取代今日預算，也不會改變 TDEE 替代模型、目標缺口方式或安全下限。"
+            ),
+            (
+                "仅用于显示个人参考；不进入 BMR、TDEE、目标缺口策略或今日预算。",
+                "Display-only personal reference. It doesn’t affect BMR, TDEE, the target-deficit approach, or today’s budget.",
+                "僅用於顯示個人參考；不會進入 BMR、TDEE、目標缺口方式或今日預算。"
+            ),
             ("体重趋势", "Weight Trend", "體重趨勢"),
             ("饮食记录", "Food Log", "飲食記錄"),
+            ("从历史记录添加", "Add from History", "從歷史記錄新增"),
+            (
+                "选择历史食物",
+                "Choose from Food History",
+                "選擇歷史食物"
+            ),
+            (
+                "搜索吃过的食物",
+                "Search foods you’ve eaten",
+                "搜尋吃過的食物"
+            ),
+            ("原记录", "Original Entry", "原始記錄"),
+            ("添加到今天", "Add to Today", "新增到今天"),
+            ("份量倍数", "Portion Multiplier", "份量倍數"),
+            ("自定义比例", "Custom Multiplier", "自訂比例"),
+            (
+                "请输入大于 0 的有效比例。",
+                "Enter a valid multiplier greater than 0.",
+                "請輸入大於 0 的有效比例。"
+            ),
+            (
+                "请输入食用比例。",
+                "Enter a portion multiplier.",
+                "請輸入食用比例。"
+            ),
+            (
+                "份量比例不能超过 10 倍。",
+                "The portion multiplier can’t exceed 10.",
+                "份量比例不能超過 10 倍。"
+            ),
+            (
+                "比例格式不正确，请输入 3/4、0.75 或 1.3。",
+                "Enter a ratio such as 3/4, 0.75, or 1.3.",
+                "比例格式不正確，請輸入 3/4、0.75 或 1.3。"
+            ),
+            (
+                "保存失败，请稍后重试。",
+                "Couldn’t save. Please try again later.",
+                "儲存失敗，請稍後再試。"
+            ),
+            (
+                "本次营养预览",
+                "Nutrition Preview",
+                "本次營養預覽"
+            ),
             ("运动补记", "Manual Exercise", "補記運動"),
+            ("走路", "Walking", "走路"),
+            ("力量训练", "Strength Training", "力量訓練"),
+            ("补记运动", "Add Manual Exercise", "補記運動"),
+            ("删除", "Delete", "刪除"),
+            ("删除运动补记", "Delete Manual Exercise", "刪除運動補記"),
+            (
+                "删除这条运动补记？",
+                "Delete This Manual Exercise?",
+                "刪除這筆運動補記？"
+            ),
+            (
+                "删除后会立即从相关日期的运动统计中移除；若已计入热量预算，预算也会同步更新。此操作无法撤销。",
+                "It will be removed from the exercise totals for the affected dates immediately. If it was included in the calorie budget, the budget will update too. This can’t be undone.",
+                "刪除後會立即從相關日期的運動統計中移除；若已計入熱量預算，預算也會同步更新。此操作無法復原。"
+            ),
+            (
+                "双击展开日期和时间选择器。",
+                "Double-tap to expand the date and time picker.",
+                "點兩下展開日期與時間選擇器。"
+            ),
+            (
+                "时间选择器已展开，双击可收起并采用当前选择。",
+                "The time picker is expanded. Double-tap to collapse it and use the current selection.",
+                "時間選擇器已展開。點兩下可收合並採用目前選擇。"
+            ),
+            ("预计结束时间", "Estimated End Time", "預計結束時間"),
+            (
+                "该时间段与另一条 App 手动补记重叠；请调整开始时间或活动时长。",
+                "This period overlaps another manual entry in the app. Adjust the start time or duration.",
+                "此時段與另一筆 App 手動補記重疊；請調整開始時間或活動時長。"
+            ),
+            ("MET 估算", "MET Estimate", "MET 估算"),
+            ("未计入预算", "Not in Budget", "未計入預算"),
+            ("补记预览", "Manual Entry Preview", "補記預覽"),
+            ("健康覆盖", "Health Coverage", "健康涵蓋"),
+            (
+                "预计实际补入",
+                "Expected Supplement",
+                "預計實際補入"
+            ),
+            (
+                "正在核对 Apple 健康记录…",
+                "Checking Apple Health records…",
+                "正在核對 Apple 健康記錄…"
+            ),
+            (
+                "Apple 健康已完整记录这次运动，无需再次补记。",
+                "Apple Health already fully recorded this exercise. No manual entry is needed.",
+                "Apple 健康已完整記錄這次運動，無需再次補記。"
+            ),
+            (
+                "无法核对 Apple 健康记录，未保存。请重试。",
+                "Apple Health records couldn’t be checked, so nothing was saved. Try again.",
+                "無法核對 Apple 健康記錄，因此未儲存。請重試。"
+            ),
+            (
+                "无法核对 Apple 健康运动记录，手动补记暂不计入热量预算。请刷新后重试。",
+                "Apple Health workout records couldn’t be checked, so manual entries are temporarily excluded from the calorie budget. Refresh and try again.",
+                "無法核對 Apple 健康運動記錄，手動補記暫不計入熱量預算。請重新整理後再試。"
+            ),
+            ("重试核对", "Retry Check", "重試核對"),
+            (
+                "采用 2024 Adult Compendium 的 MET 群体估算。Apple 健康已记录同类型运动时，App 会按覆盖分钟只补未记录部分；完整覆盖则不会保存。",
+                "Uses population MET estimates from the 2024 Adult Compendium. When Apple Health has the same exercise type, the app supplements only uncovered minutes; a fully covered workout won’t be saved.",
+                "採用 2024 Adult Compendium 的 MET 群體估算。Apple 健康已記錄同類型運動時，App 只會補上未涵蓋的分鐘；完整涵蓋時不會儲存。"
+            ),
             ("扫描营养表", "Scan Nutrition Label", "掃描營養標示"),
             ("星巴克定制核对", "Starbucks Customization Check", "星巴克客製核對"),
             ("身体成分与校准", "Body Composition & Calibration", "身體組成與校準"),

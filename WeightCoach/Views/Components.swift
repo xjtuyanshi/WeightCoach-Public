@@ -4,6 +4,14 @@ func interfaceCalorieText(_ value: String, locale: Locale) -> String {
     "\(value) \(interfaceLocalized("千卡", locale: locale))"
 }
 
+func interfaceStepText(_ value: Double, locale: Locale) -> String {
+    let safeValue = value.isFinite ? max(0, value) : 0
+    let formatted = Int(safeValue.rounded()).formatted(
+        .number.locale(locale)
+    )
+    return "\(formatted) \(interfaceLocalized("步", locale: locale))"
+}
+
 /// 小型数据卡片
 struct StatCard: View {
     let title: String
@@ -393,14 +401,23 @@ struct MacroSummaryView: View {
 struct EnergyExpenditureCard: View {
     let bmrKcal: Double
     let healthActiveEnergyKcal: Double
+    let healthSteps: Double
+    let hasHealthActiveEnergySamples: Bool
+    let lastHealthActivityRefreshDate: Date?
+    let healthActivityErrorDescription: String?
     let manualExerciseEstimatedKcal: Double
     let manualExerciseHealthOverlapKcal: Double
+    let manualExerciseHealthWorkoutCoveredMinutes: Double
+    let manualExerciseUsedHealthWorkoutCoverage: Bool
+    let manualExerciseCoverageAvailable: Bool
     let manualExerciseSupplementKcal: Double
     let tdeeKcal: Double
     let deficitKcal: Double
     let budgetKcal: Double
+    let deficitStrategy: DeficitStrategy
     let activityFactor: Double
     let includeActiveEnergy: Bool
+    let onAddWalking: () -> Void
 
     @State private var showExplanation = false
     @Environment(\.locale) private var locale
@@ -417,6 +434,7 @@ struct EnergyExpenditureCard: View {
                     Image(systemName: "info.circle")
                 }
                 .accessibilityLabel("热量消耗如何计算")
+                .accessibilityIdentifier("dashboard.energy-explanation")
             }
 
             HStack(alignment: .firstTextBaseline) {
@@ -451,13 +469,86 @@ struct EnergyExpenditureCard: View {
                 expenditureValue("基础代谢", value: bmrKcal)
                 expenditureValue(
                     includeActiveEnergy ? "Apple 健康活动" : "健康活动（未计入）",
-                    value: healthActiveEnergyKcal
+                    value: hasHealthActiveEnergySamples
+                        ? healthActiveEnergyKcal
+                        : nil
                 )
                 expenditureValue(
                     includeActiveEnergy ? "手动运动补差" : "手动运动（未计入）",
                     value: manualExerciseSupplementKcal
                 )
                 expenditureValue("目标缺口", value: deficitKcal)
+                    .accessibilityIdentifier("dashboard.target-deficit")
+            }
+
+            HStack {
+                Label("今日步数", systemImage: "figure.walk")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(interfaceStepText(healthSteps, locale: locale))
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+            }
+            .font(.caption)
+
+            if HealthActivityGuidance.shouldSuggestManualWalking(
+                steps: healthSteps,
+                hasActiveEnergySamples: hasHealthActiveEnergySamples,
+                includeActiveEnergy: includeActiveEnergy
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(
+                        "手机已记录步数，但 Apple 健康今天没有提供活动能量；步数不会自动换算为热量。",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+
+            if HealthActivityGuidance.shouldOfferManualWalking(
+                steps: healthSteps,
+                includeActiveEnergy: includeActiveEnergy
+            ) {
+                Button(action: onAddWalking) {
+                    Label("补记运动", systemImage: "figure.walk")
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("dashboard.add-exercise")
+            }
+
+            if healthActivityErrorDescription != nil {
+                Label(
+                    "Apple 健康活动数据读取失败，请点右上角刷新后重试。",
+                    systemImage: "exclamationmark.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+
+            if includeActiveEnergy,
+               !manualExerciseCoverageAvailable,
+               manualExerciseEstimatedKcal > 0 {
+                Label(
+                    "无法核对 Apple 健康运动记录，手动补记暂不计入热量预算。请刷新后重试。",
+                    systemImage: "exclamationmark.shield.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .accessibilityIdentifier("dashboard.exercise-coverage-unavailable")
+            }
+
+            if let lastHealthActivityRefreshDate {
+                Text(
+                    "\(interfaceLocalized("健康数据更新于", locale: locale)) \(lastHealthActivityRefreshDate.formatted(.dateTime.hour().minute().locale(locale)))"
+                )
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
             }
 
             Text(interfaceLocalized(
@@ -478,15 +569,21 @@ struct EnergyExpenditureCard: View {
         }
     }
 
-    private func expenditureValue(_ title: String, value: Double) -> some View {
+    private func expenditureValue(_ title: String, value: Double?) -> some View {
         HStack {
             Text(interfaceLocalized(title, locale: locale))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             Spacer(minLength: 4)
-            Text(interfaceCalorieText(value.kcalText, locale: locale))
-                .font(.caption.bold().monospacedDigit())
+            if let value {
+                Text(interfaceCalorieText(value.kcalText, locale: locale))
+                    .font(.caption.bold().monospacedDigit())
+            } else {
+                Text(interfaceLocalized("未读取到", locale: locale))
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
@@ -501,12 +598,28 @@ struct EnergyExpenditureCard: View {
                 Section("总消耗估算") {
                     if includeActiveEnergy {
                         LabeledContent("基础代谢 × 1.1", value: interfaceCalorieText((bmrKcal * 1.1).kcalText, locale: locale))
-                        LabeledContent("Apple 健康活动", value: interfaceCalorieText(healthActiveEnergyKcal.kcalText, locale: locale))
-                        LabeledContent("手动运动估算", value: interfaceCalorieText(manualExerciseEstimatedKcal.kcalText, locale: locale))
                         LabeledContent(
-                            "其中健康已记录",
-                            value: interfaceCalorieText(manualExerciseHealthOverlapKcal.kcalText, locale: locale)
+                            "Apple 健康活动",
+                            value: hasHealthActiveEnergySamples
+                                ? interfaceCalorieText(healthActiveEnergyKcal.kcalText, locale: locale)
+                                : interfaceLocalized("未读取到", locale: locale)
                         )
+                        LabeledContent(
+                            "今日步数",
+                            value: interfaceStepText(healthSteps, locale: locale)
+                        )
+                        LabeledContent("手动运动估算", value: interfaceCalorieText(manualExerciseEstimatedKcal.kcalText, locale: locale))
+                        if manualExerciseUsedHealthWorkoutCoverage {
+                            LabeledContent(
+                                "健康覆盖",
+                                value: "\(Int(manualExerciseHealthWorkoutCoveredMinutes.rounded())) \(interfaceLocalized("分钟", locale: locale))"
+                            )
+                        } else {
+                            LabeledContent(
+                                "其中健康已记录",
+                                value: interfaceCalorieText(manualExerciseHealthOverlapKcal.kcalText, locale: locale)
+                            )
+                        }
                         LabeledContent("实际补入", value: interfaceCalorieText(manualExerciseSupplementKcal.kcalText, locale: locale))
                     } else {
                         LabeledContent("基础代谢", value: interfaceCalorieText(bmrKcal.kcalText, locale: locale))
@@ -522,8 +635,37 @@ struct EnergyExpenditureCard: View {
                         .foregroundStyle(.secondary)
                 }
                 Section("今日饮食目标") {
-                    LabeledContent("动态目标缺口", value: interfaceCalorieText(deficitKcal.kcalText, locale: locale))
+                    LabeledContent(
+                        "减脂方式",
+                        value: interfaceLocalized(
+                            deficitStrategy.label,
+                            locale: locale
+                        )
+                    )
+                    LabeledContent(
+                        "计划缺口",
+                        value: interfaceCalorieText(deficitKcal.kcalText, locale: locale)
+                    )
+                    let effectiveDeficit = max(0, tdeeKcal - budgetKcal)
+                    if effectiveDeficit + 0.5 < deficitKcal {
+                        LabeledContent(
+                            "实际缺口（最低摄入量限制）",
+                            value: interfaceCalorieText(
+                                effectiveDeficit.kcalText,
+                                locale: locale
+                            )
+                        )
+                        .accessibilityIdentifier("dashboard.effective-deficit")
+                    }
                     LabeledContent("今日热量目标", value: interfaceCalorieText(budgetKcal.kcalText, locale: locale))
+                    Text(interfaceLocalized(
+                        deficitStrategy == .rapidFatLoss
+                            ? "固定为每天 750 千卡；达到目标体重后归零。若触及最低摄入量，实际缺口会小于 750 千卡。"
+                            : "按剩余体重和目标日期动态调整为每天 250～1,000 千卡。",
+                        locale: locale
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     Text("“还能吃”只用今日热量目标减去饮食摄入，不会再减一次运动消耗。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -534,6 +676,7 @@ struct EnergyExpenditureCard: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { showExplanation = false }
+                        .accessibilityIdentifier("dashboard.energy-explanation-done")
                 }
             }
         }

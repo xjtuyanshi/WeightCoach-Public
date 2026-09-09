@@ -13,12 +13,14 @@ struct ProfileOnboardingView: View {
     }
 
     @EnvironmentObject private var profile: ProfileStore
+    @Environment(\.locale) private var locale
 
     @State private var heightText = ""
     @State private var currentWeightText = ""
     @State private var goalWeightText = ""
     @State private var birthYear = Calendar.current.component(.year, from: .now) - 30
     @State private var sex: SexSelection?
+    @State private var deficitStrategy: DeficitStrategy = .deadlinePaced
     @State private var goalEndDate =
         Calendar.current.date(byAdding: .day, value: 90, to: .now) ?? .now
 
@@ -113,12 +115,41 @@ struct ProfileOnboardingView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    DatePicker(
-                        "目标日期",
-                        selection: $goalEndDate,
-                        in: earliestGoalDate...latestGoalDate,
-                        displayedComponents: .date
-                    )
+                    Picker("减脂方式", selection: $deficitStrategy) {
+                        ForEach(DeficitStrategy.allCases) { strategy in
+                            Text(interfaceLocalized(strategy.label, locale: locale))
+                                .tag(strategy)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                    .accessibilityIdentifier("onboarding.deficit-strategy")
+
+                    if deficitStrategy == .rapidFatLoss {
+                        DatePicker(
+                            "参考目标日期",
+                            selection: $goalEndDate,
+                            in: earliestGoalDate...latestGoalDate,
+                            displayedComponents: .date
+                        )
+                        .accessibilityIdentifier("onboarding.goal-end-date")
+                    } else {
+                        DatePicker(
+                            "目标日期",
+                            selection: $goalEndDate,
+                            in: earliestGoalDate...latestGoalDate,
+                            displayedComponents: .date
+                        )
+                        .accessibilityIdentifier("onboarding.goal-end-date")
+                    }
+
+                    Text(interfaceLocalized(
+                        deficitStrategy == .rapidFatLoss
+                            ? "此模式每天保持 750 千卡计划缺口；目标日期仅供进度参考，今日热量目标仍受最低摄入量下限约束。"
+                            : "每日计划缺口会按剩余体重和目标日期动态调整。",
+                        locale: locale
+                    ))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 }
 
                 if !canContinue {
@@ -163,6 +194,7 @@ struct ProfileOnboardingView: View {
         profile.goalEndDate = goalEndDate
         profile.goalStartWeight = currentWeightKg
         profile.goalWeight = goalWeightKg
+        profile.deficitStrategy = deficitStrategy
         profile.completeOnboarding()
     }
 

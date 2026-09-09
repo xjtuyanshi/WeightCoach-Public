@@ -129,6 +129,55 @@ final class FoodRepeatSuggestionEngineTests: XCTestCase {
         XCTAssertEqual(result.all.count, 6)
     }
 
+    func testSixFrequentFoodsFillAllSlotsAndKeepTheirLatestPortions() {
+        let snapshots = (0..<6).flatMap { index in
+            [
+                snapshot(index: index, key: "food-\(index)", daysAgo: 0, hour: 12 - index),
+                snapshot(index: index + 6, key: "food-\(index)", daysAgo: 1, hour: 8),
+            ]
+        }
+        let result = FoodRepeatSuggestionEngine.makeSuggestions(
+            snapshots: snapshots, referenceDate: referenceDate, calendar: calendar
+        )
+
+        XCTAssertEqual(result.frequent.map(\.key), ["food-0", "food-1", "food-2", "food-3"])
+        XCTAssertEqual(result.recent.map(\.key), ["food-4", "food-5"])
+        XCTAssertEqual(result.all.map(\.sourceIndex), Array(0..<6))
+        XCTAssertTrue(result.all.allSatisfy(\.isFrequent))
+        XCTAssertEqual(Set(result.all.map(\.key)).count, 6)
+    }
+
+    func testOverflowCompetesByRecencyWithOneTimeFoods() {
+        var snapshots = (0..<5).flatMap { index in
+            [
+                snapshot(index: index, key: "frequent-\(index)", daysAgo: 1, hour: 12 - index),
+                snapshot(index: index + 5, key: "frequent-\(index)", daysAgo: 2, hour: 8),
+            ]
+        }
+        snapshots.append(snapshot(index: 10, key: "new-food", daysAgo: 0, hour: 8))
+        let result = FoodRepeatSuggestionEngine.makeSuggestions(
+            snapshots: snapshots, referenceDate: referenceDate, calendar: calendar
+        )
+
+        XCTAssertEqual(result.recent.map(\.key), ["new-food", "frequent-4"])
+        XCTAssertEqual(result.all.count, 6)
+    }
+
+    func testZeroFrequentPriorityStillShowsFoodsEatenOnMultipleDays() {
+        let snapshots = [
+            snapshot(index: 0, key: "egg", daysAgo: 0, hour: 8),
+            snapshot(index: 1, key: "egg", daysAgo: 1, hour: 8),
+        ]
+        let result = FoodRepeatSuggestionEngine.makeSuggestions(
+            snapshots: snapshots, referenceDate: referenceDate, calendar: calendar,
+            frequentLimit: 0, totalLimit: 1
+        )
+
+        XCTAssertTrue(result.frequent.isEmpty)
+        XCTAssertEqual(result.recent.map(\.sourceIndex), [0])
+        XCTAssertTrue(result.recent[0].isFrequent)
+    }
+
     func testIdentityPrefersProductThenBarcodeThenReferenceAndNormalizesName() {
         let productID = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
 

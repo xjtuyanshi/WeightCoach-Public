@@ -172,6 +172,66 @@ final class HistoricalTrendEngineTests: XCTestCase {
         XCTAssertEqual(result.points[0].manualSupplementKcal, 0)
     }
 
+    func testWatchModeFailsClosedOnlyOnDaysWithManualExerciseWhenCoverageIsUnavailable() {
+        let start = date(2026, 7, 20)
+        let reference = date(2026, 7, 22)
+        let exercise = HistoricalTrendExercise(
+            interval: ExerciseEnergyInterval(
+                startDate: date(2026, 7, 20, hour: 18),
+                endDate: date(2026, 7, 20, hour: 19),
+                estimatedActiveEnergyKcal: 500,
+                activityType: .running
+            )
+        )
+        let result = calculate(
+            start: start,
+            reference: reference,
+            foods: [
+                food(on: 0, from: start, calories: 2_000),
+                food(on: 1, from: start, calories: 2_000),
+            ],
+            exercises: [exercise],
+            configuration: config(
+                includeActiveEnergy: true,
+                calibratedBodyFatMeasuredAt: start
+            ),
+            healthData: HistoricalTrendHealthData(
+                dailyActiveEnergy: [
+                    DailyActiveEnergyReading(dayStart: start, kcal: 400),
+                    DailyActiveEnergyReading(
+                        dayStart: day(1, from: start),
+                        kcal: 400
+                    ),
+                ],
+                activeEnergyIntervals: [],
+                workoutIntervals: [],
+                weightPoints: [],
+                bodyFatPoints: [],
+                manualOverlapDataAvailable: false
+            )
+        )
+
+        XCTAssertEqual(result.points.count, 2)
+        XCTAssertNil(result.points[0].estimatedExpenditureKcal)
+        XCTAssertNil(result.points[0].energyBalanceKcal)
+        XCTAssertEqual(result.points[0].manualSupplementKcal, 0)
+
+        let bmr = CalorieEngine.bmr(
+            weightKg: 80,
+            heightCm: 170,
+            age: 30,
+            isMale: false,
+            bodyFatPercent: 24
+        )
+        XCTAssertEqual(
+            result.points[1].estimatedExpenditureKcal!,
+            bmr * 1.1 + 400,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(result.points[1].manualSupplementKcal, 0)
+        XCTAssertNotNil(result.points[1].energyBalanceKcal)
+    }
+
     func testMissingFoodOrWatchActivityNeverBecomesZero() {
         let start = date(2026, 7, 20)
         let reference = date(2026, 7, 23)
@@ -411,6 +471,53 @@ final class HistoricalTrendEngineTests: XCTestCase {
 
         XCTAssertEqual(result.points[0].manualSupplementKcal, 200, accuracy: 0.001)
         XCTAssertEqual(result.points[1].manualSupplementKcal, 200, accuracy: 0.001)
+    }
+
+    func testMatchingHistoricalWorkoutPreventsMetTopUp() {
+        let start = date(2026, 7, 20)
+        let reference = date(2026, 7, 22)
+        let exerciseStart = date(2026, 7, 20, hour: 10)
+        let exerciseEnd = date(2026, 7, 20, hour: 11)
+        let exercise = HistoricalTrendExercise(
+            interval: ExerciseEnergyInterval(
+                startDate: exerciseStart,
+                endDate: exerciseEnd,
+                estimatedActiveEnergyKcal: 600,
+                activityType: .running
+            )
+        )
+        let healthSample = HealthActiveEnergyInterval(
+            startDate: exerciseStart,
+            endDate: exerciseEnd,
+            kcal: 420
+        )!
+        let workout = HealthWorkoutInterval(
+            startDate: exerciseStart,
+            endDate: exerciseEnd,
+            activityType: .running,
+            hasActiveEnergy: true
+        )
+
+        let result = calculate(
+            start: start,
+            reference: reference,
+            foods: [food(on: 0, from: start, calories: 2_000)],
+            exercises: [exercise],
+            configuration: config(includeActiveEnergy: true),
+            healthData: HistoricalTrendHealthData(
+                dailyActiveEnergy: [
+                    DailyActiveEnergyReading(dayStart: start, kcal: 420),
+                ],
+                activeEnergyIntervals: [healthSample],
+                workoutIntervals: [workout],
+                weightPoints: [],
+                bodyFatPoints: [],
+                manualOverlapDataAvailable: true
+            )
+        )
+
+        XCTAssertEqual(result.points[0].manualSupplementKcal, 0, accuracy: 0.001)
+        XCTAssertEqual(result.points[0].healthActiveEnergyKcal, 420)
     }
 
     func testMacroCoverageKeepsKnownValuesAndDoesNotInventMissingValues() {

@@ -17,6 +17,8 @@ struct DashboardView: View {
     @State private var showSentenceBackfill = false
     @State private var showBarcodeScan = false
     @State private var showCommonFoodSearch = false
+    @State private var showFoodHistory = false
+    @State private var showAddWalkingExercise = false
     @State private var repeatingFoodKey: String?
     @State private var undoEntry: FoodEntry?
     @State private var repeatMessage: String?
@@ -118,14 +120,28 @@ struct DashboardView: View {
                     EnergyExpenditureCard(
                         bmrKcal: metrics.bmr,
                         healthActiveEnergyKcal: metrics.healthActiveEnergy,
+                        healthSteps: health.todaySteps,
+                        hasHealthActiveEnergySamples: !health.todayActiveEnergyIntervals.isEmpty,
+                        lastHealthActivityRefreshDate: health.lastActivityRefreshDate,
+                        healthActivityErrorDescription: health.activityDataErrorDescription,
                         manualExerciseEstimatedKcal: metrics.manualExerciseEstimatedEnergy,
                         manualExerciseHealthOverlapKcal: metrics.manualExerciseHealthOverlap,
+                        manualExerciseHealthWorkoutCoveredMinutes:
+                            metrics.manualExerciseHealthWorkoutCoveredMinutes,
+                        manualExerciseUsedHealthWorkoutCoverage:
+                            metrics.manualExerciseUsedHealthWorkoutCoverage,
+                        manualExerciseCoverageAvailable:
+                            metrics.manualExerciseCoverageAvailable,
                         manualExerciseSupplementKcal: metrics.manualExerciseSupplementalEnergy,
                         tdeeKcal: metrics.tdee,
                         deficitKcal: metrics.deficit,
                         budgetKcal: metrics.budget,
+                        deficitStrategy: profile.deficitStrategy,
                         activityFactor: profile.activityFactor,
-                        includeActiveEnergy: profile.includeActiveEnergy
+                        includeActiveEnergy: profile.includeActiveEnergy,
+                        onAddWalking: {
+                            showAddWalkingExercise = true
+                        }
                     )
 
                     CaffeineSummaryCard(metrics: caffeine)
@@ -164,6 +180,9 @@ struct DashboardView: View {
                 if DemoMode.demoSentenceBackfillEnabled {
                     showSentenceBackfill = true
                 }
+                if DemoMode.demoHistoryFoodRepeatEnabled {
+                    showFoodHistory = true
+                }
             }
             .task(id: weeklyTrendRefreshKey) {
                 await reloadWeeklyTrends()
@@ -181,6 +200,20 @@ struct DashboardView: View {
                     defaultDate: .now,
                     demoFoodID: DemoMode.demoCommonFoodEnabled ? "egg-hard-boiled" : nil,
                     demoQuery: DemoMode.demoFoodAutocompleteEnabled ? "西" : nil
+                )
+            }
+            .sheet(isPresented: $showFoodHistory) {
+                HistoryFoodRepeatView { entry in
+                    undoEntry = entry
+                    repeatError = nil
+                    repeatMessage = recordedFoodMessage(entry.name)
+                }
+            }
+            .sheet(isPresented: $showAddWalkingExercise) {
+                AddExerciseView(
+                    defaultWeightKg: metrics.currentWeight,
+                    existingExercises: allExercises,
+                    initialActivityType: .walking
                 )
             }
             .safeAreaInset(edge: .bottom) {
@@ -204,7 +237,9 @@ struct DashboardView: View {
 
     @MainActor
     private func refreshHealthAndReminders() async {
-        await health.refreshAll()
+        if !DemoMode.isActive {
+            await health.refreshAll()
+        }
         await reloadWeeklyTrends()
         await reminders.reconcile(
             context: modelContext,
@@ -270,20 +305,18 @@ struct DashboardView: View {
                     photoQuickButton
                     barcodeQuickButton
                     manualQuickButton
+                    historyQuickButton
                 }
-            } else if AppLanguage.system.resolvedLanguage(systemLocale: locale) == .english {
+            } else {
                 VStack(spacing: 10) {
                     HStack(spacing: 12) {
                         photoQuickButton
                         barcodeQuickButton
                     }
-                    manualQuickButton
-                }
-            } else {
-                HStack(spacing: 12) {
-                    photoQuickButton
-                    barcodeQuickButton
-                    manualQuickButton
+                    HStack(spacing: 12) {
+                        manualQuickButton
+                        historyQuickButton
+                    }
                 }
             }
         }
@@ -300,6 +333,12 @@ struct DashboardView: View {
     private var manualQuickButton: some View {
         quickButton("自行填写", icon: "magnifyingglass") {
             showCommonFoodSearch = true
+        }
+    }
+
+    private var historyQuickButton: some View {
+        quickButton("从历史记录添加", icon: "clock.arrow.circlepath") {
+            showFoodHistory = true
         }
     }
 
@@ -705,7 +744,11 @@ struct DashboardView: View {
                 Label("减重目标", systemImage: "flag.checkered")
                     .font(.subheadline.bold())
                 Spacer()
-                Text(remainingDaysText(profile.remainingDays))
+                Text(
+                    profile.deficitStrategy == .rapidFatLoss
+                        ? interfaceLocalized("尽快减脂", locale: locale)
+                        : remainingDaysText(profile.remainingDays)
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

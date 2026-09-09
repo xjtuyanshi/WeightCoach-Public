@@ -4,6 +4,8 @@ import SwiftData
 enum ExerciseActivityType: String, CaseIterable, Identifiable, Codable, Sendable {
     case basketball
     case running
+    case walking
+    case strengthTraining
 
     var id: String { rawValue }
 
@@ -11,6 +13,8 @@ enum ExerciseActivityType: String, CaseIterable, Identifiable, Codable, Sendable
         switch self {
         case .basketball: return "篮球"
         case .running: return "跑步"
+        case .walking: return "走路"
+        case .strengthTraining: return "力量训练"
         }
     }
 
@@ -18,6 +22,21 @@ enum ExerciseActivityType: String, CaseIterable, Identifiable, Codable, Sendable
         switch self {
         case .basketball: return "basketball"
         case .running: return "figure.run"
+        case .walking: return "figure.walk"
+        case .strengthTraining: return "dumbbell.fill"
+        }
+    }
+
+    var durationGuidance: String {
+        switch self {
+        case .basketball:
+            return "篮球只填写真正上场活动的时间，不包含坐场边、长时间休息或聊天。"
+        case .running:
+            return "跑步填写实际跑动时间，排除长时间停下休息的部分。"
+        case .walking:
+            return "走路填写实际步行时间，并按大部分路程的速度选择强度。"
+        case .strengthTraining:
+            return "力量训练可包含正常组间休息，但请排除长时间停顿或聊天。"
         }
     }
 }
@@ -33,6 +52,12 @@ enum ExerciseIntensity: String, CaseIterable, Identifiable, Codable, Sendable {
     case runningSlow
     case runningModerate
     case runningFast
+    case walkingSlow
+    case walkingModerate
+    case walkingBrisk
+    case strengthGeneral
+    case strengthCompound
+    case strengthVigorous
 
     var id: String { rawValue }
 
@@ -42,6 +67,10 @@ enum ExerciseIntensity: String, CaseIterable, Identifiable, Codable, Sendable {
             return .basketball
         case .runningSlow, .runningModerate, .runningFast:
             return .running
+        case .walkingSlow, .walkingModerate, .walkingBrisk:
+            return .walking
+        case .strengthGeneral, .strengthCompound, .strengthVigorous:
+            return .strengthTraining
         }
     }
 
@@ -53,6 +82,12 @@ enum ExerciseIntensity: String, CaseIterable, Identifiable, Codable, Sendable {
         case .runningSlow: return "慢跑"
         case .runningModerate: return "中速跑"
         case .runningFast: return "快速跑"
+        case .walkingSlow: return "慢走"
+        case .walkingModerate: return "正常走"
+        case .walkingBrisk: return "快走"
+        case .strengthGeneral: return "常规力量"
+        case .strengthCompound: return "复合动作"
+        case .strengthVigorous: return "高强度举重"
         }
     }
 
@@ -64,6 +99,12 @@ enum ExerciseIntensity: String, CaseIterable, Identifiable, Codable, Sendable {
         case .runningSlow: return "约 4.0–4.2 mph（约 13 分/英里）"
         case .runningModerate: return "约 5.0–5.2 mph（约 12 分/英里）"
         case .runningFast: return "约 7.0 mph（约 8.5 分/英里）"
+        case .walkingSlow: return "约 2.0–2.4 mph，轻松慢走"
+        case .walkingModerate: return "约 2.8–3.4 mph，正常步速"
+        case .walkingBrisk: return "约 3.5–3.9 mph，以锻炼为目的的快走"
+        case .strengthGeneral: return "多种动作，每组约 8–15 次，使用不同阻力"
+        case .strengthCompound: return "深蹲、硬拉等复合动作，慢速或爆发发力"
+        case .strengthVigorous: return "大重量、力量举或健美训练，高强度"
         }
     }
 
@@ -75,6 +116,12 @@ enum ExerciseIntensity: String, CaseIterable, Identifiable, Codable, Sendable {
         case .runningSlow: return 6.5
         case .runningModerate: return 8.5
         case .runningFast: return 11.0
+        case .walkingSlow: return 2.8
+        case .walkingModerate: return 3.8
+        case .walkingBrisk: return 4.8
+        case .strengthGeneral: return 3.5
+        case .strengthCompound: return 5.0
+        case .strengthVigorous: return 6.0
         }
     }
 
@@ -86,6 +133,12 @@ enum ExerciseIntensity: String, CaseIterable, Identifiable, Codable, Sendable {
         case .runningSlow: return "12028"
         case .runningModerate: return "12030"
         case .runningFast: return "12070"
+        case .walkingSlow: return "17152"
+        case .walkingModerate: return "17190"
+        case .walkingBrisk: return "17200"
+        case .strengthGeneral: return "02054"
+        case .strengthCompound: return "02052"
+        case .strengthVigorous: return "02050"
         }
     }
 
@@ -97,6 +150,8 @@ enum ExerciseIntensity: String, CaseIterable, Identifiable, Codable, Sendable {
         switch activityType {
         case .basketball: return .basketballGeneral
         case .running: return .runningModerate
+        case .walking: return .walkingModerate
+        case .strengthTraining: return .strengthGeneral
         }
     }
 }
@@ -176,7 +231,8 @@ final class ExerciseEntry {
         ExerciseEnergyInterval(
             startDate: startDate,
             endDate: endDate,
-            estimatedActiveEnergyKcal: estimatedActiveEnergyKcal
+            estimatedActiveEnergyKcal: estimatedActiveEnergyKcal,
+            activityType: activityType
         )
     }
 

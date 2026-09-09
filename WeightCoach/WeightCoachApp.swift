@@ -10,6 +10,7 @@ struct WeightCoachApp: App {
 
     init() {
         LegacyCredentialCleaner.removeDeprecatedClaudeKeyIfNeeded()
+        BridgeConfiguration.restoreBundledConfigurationIfRequested()
     }
 
     var body: some Scene {

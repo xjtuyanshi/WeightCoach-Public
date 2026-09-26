@@ -20,7 +20,7 @@ git switch main
 
 ## 2. 开发环境
 
-- Xcode 26
+- Xcode 26（项目起始版本）；2026-09-26 也已在 Xcode 27.0 完整构建通过
 - iOS 17 或更高版本
 - Swift 5 语言模式
 - 真机测试需要可用于签名的 Apple Developer Team
@@ -143,3 +143,39 @@ xcrun --sdk iphonesimulator swiftc -typecheck -target arm64-apple-ios17.0-simula
 - Demo Mode 中的身体、饮食和运动数据均为虚构测试数据。
 - 不要提交 `BridgeConfigLocal.plist`、API Key、访问令牌、个人服务 URL、健康数据导出
   或真机日志。
+
+## 9. 更新已有安装与签名到期
+
+### 更新源码
+
+先在自己的分支保存本地修改，特别是 Team、Bundle ID 与 App Group 配置。不要使用
+`git reset --hard` 或删除文件来强行覆盖自己的配置。没有本地改动的 `main` 可以运行：
+
+```bash
+git switch main
+git pull --ff-only origin main
+open WeightCoach.xcodeproj
+```
+
+如果已有自己的定制分支，在自己的分支合并或挑选公开版更新并处理冲突；不要把私人配置
+推回公开仓库。`--ff-only` 因分叉而停止时，应先核对分支差异，不要强制重置。
+
+### 更新手机上的 App
+
+确认数据已有备份，并保留上次安装所用的 **Team、App Bundle ID 与 App Group**。
+在 Xcode 选择原来的 iPhone，重新构建并覆盖安装；不要先卸载 App。改变标识或 App Group
+可能会进入另一份数据容器，不能把这种情况当成原记录已删除。
+
+### Personal Team 七天签名
+
+Apple 官方说明，Personal Team 的 provisioning profile 在签发七天后到期，届时可能需要
+重新构建并安装。这不是 App 内订阅到期，也不是修改 GitHub 仓库就能自动延长的授权。
+参见 [Apple Developer 账号说明](https://developer.apple.com/help/account/basics/about-your-developer-account)。
+
+到期后，用自己的 Xcode 登录账号重新构建并覆盖安装，不要清空饮食记录或重设 AI 地址。
+若手机明确出现“不受信任的开发者 / Untrusted Developer”，到
+**设置 → 通用 → VPN 与设备管理 → 开发者 App** 中核对并信任自己的开发者身份，再打开 App。
+若系统显示的是其他错误，应先查看具体错误，不要一律当作七天签名问题。
+
+公开仓库不包含开发证书、provisioning profile 或已签名安装包；下载源码不会自动获得
+作者的设备授权或 AI 服务使用权限。
